@@ -51,6 +51,12 @@ class TriageMessageRequest(BaseModel):
     clinic_id: str
     message: str = Field(..., min_length=1, max_length=5000)
     language: Optional[str] = Field("en", max_length=10)
+    voice_distress_score: Optional[float] = Field(
+        None,
+        ge=0,
+        le=10,
+        description="Voice distress score (0-10) computed from speech analysis on the frontend",
+    )
 
 
 # ── Triage Score ──────────────────────────────────────────────────────────────

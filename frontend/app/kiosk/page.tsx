@@ -25,8 +25,8 @@ export default function KioskPage() {
 
   // Stage 2 → 3 (auto-triggered when triageResult appears)
   const handleSend = useCallback(
-    (text: string) => {
-      if (registration) sendMessage(text, registration.language);
+    (text: string, voiceDistressScore?: number) => {
+      if (registration) sendMessage(text, registration.language, voiceDistressScore);
     },
     [registration, sendMessage]
   );
@@ -53,6 +53,7 @@ export default function KioskPage() {
           messages={messages}
           isStreaming={isStreaming}
           onSend={handleSend}
+          language={registration?.language}
         />
       )}
 

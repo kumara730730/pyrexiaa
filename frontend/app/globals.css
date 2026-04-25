@@ -229,3 +229,112 @@
     background-position: 200% 0;
   }
 }
+
+/* ── Voice Mic Button ────────────────────────────────────────────────────── */
+
+.voice-mic-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Pulsing red rings */
+@keyframes voicePulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0.8);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2);
+    opacity: 0;
+  }
+}
+
+.voice-pulse-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid #f85149;
+  pointer-events: none;
+  z-index: 1;
+  animation: voicePulse 1.8s ease-out infinite;
+}
+
+.voice-pulse-ring-2 {
+  animation-delay: 0.6s;
+}
+
+/* Button hover & active states */
+.voice-mic-btn {
+  outline: none;
+}
+
+.voice-mic-btn:hover:not(:disabled) {
+  border-color: #58a6ff !important;
+  color: #58a6ff !important;
+  box-shadow: 0 0 16px rgba(88, 166, 255, 0.15);
+}
+
+.voice-mic-btn--active {
+  box-shadow: 0 0 20px rgba(248, 81, 73, 0.3);
+}
+
+.voice-mic-btn--active:hover {
+  border-color: #f85149 !important;
+  color: #f85149 !important;
+  box-shadow: 0 0 24px rgba(248, 81, 73, 0.4);
+}
+
+/* Transcript preview tooltip */
+.voice-transcript-preview {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  max-width: 280px;
+  z-index: 10;
+  animation: fadeInUp 0.2s ease-out;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.voice-transcript-preview::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #30363d;
+}
+
+.voice-transcript-text {
+  font-size: 13px;
+  color: #f0f6fc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.voice-distress-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
+}
+
