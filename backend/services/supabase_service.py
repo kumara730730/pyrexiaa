@@ -217,3 +217,100 @@ async def get_demo_patient(name: str = "Aarav Sharma") -> Optional[dict]:
         return result.data[0] if result.data else None
     except Exception:
         return None
+
+
+# ── Demo cache seeding ────────────────────────────────────────────────────────
+
+
+async def upsert_demo_cache(scenario: str, response_json: dict) -> None:
+    """Insert or update a demo_cache row (upsert on scenario key)."""
+    client = _get_client()
+    row = {
+        "scenario": scenario,
+        "response_json": response_json,
+    }
+    client.table("demo_cache").upsert(row, on_conflict="scenario").execute()
+
+
+async def seed_demo_cache() -> None:
+    """Seed the aarav_sharma_triage demo record into demo_cache on startup.
+
+    Idempotent — uses upsert so it is safe to call on every boot.
+    """
+    import logging
+
+    logger = logging.getLogger("supabase_service")
+
+    payload = {
+        "patient": {
+            "name": "Aarav Sharma",
+            "age": 52,
+            "gender": "M",
+            "history_notes": (
+                "Type 2 Diabetes (metformin 500mg BD). Smoker — 15 pack-years. "
+                "No prior cardiac events documented. Last clinic visit: 8 months "
+                "ago for HbA1c monitoring."
+            ),
+        },
+        "triage_output": {
+            "urgency_score": 94,
+            "urgency_level": "CRITICAL",
+            "reasoning_trace": [
+                "ACS pattern: chest pressure + left arm radiation",
+                "Diaphoresis with sudden onset — high-risk presentation",
+                "Symptom onset during sleep/early morning — peak cardiac event window",
+                "Jaw radiation = triple-vessel pattern consistent with STEMI/NSTEMI",
+                "Diabetic patient: atypical presentation risk — real urgency likely higher than reported",
+                "15 pack-year smoking history compounds atherogenic risk",
+            ],
+            "presenting_complaint": (
+                "52M presenting with sudden-onset chest tightness, left arm heaviness, "
+                "and jaw radiation since 07:00. Associated diaphoresis."
+            ),
+            "red_flags": [
+                "ACS pattern — chest + arm + jaw radiation",
+                "Diaphoresis reported",
+                "Sudden onset in early morning — peak STEMI window",
+                "Diabetic with masked pain threshold",
+            ],
+            "suggested_doctor_questions": [
+                "Is the chest discomfort constant or does it come and go?",
+                "Rate your pain from 1 to 10 right now.",
+                "Have you taken any aspirin or GTN before coming in?",
+            ],
+            "recommended_doctor_specialty": "Cardiology",
+        },
+        "brief": {
+            "brief_summary": (
+                "52M diabetic smoker presenting with classical ACS-pattern symptoms: "
+                "chest pressure, left arm heaviness, jaw radiation, and diaphoresis "
+                "since 07:00. Atypical pain in diabetics — do not underestimate. "
+                "Immediate assessment required."
+            ),
+            "priority_flags": [
+                "ACS pattern — chest + arm + jaw triple radiation",
+                "Diabetic: masked pain threshold, atypical presentation risk",
+                "Diaphoresis with sudden AM onset — peak STEMI window",
+                "15 pack-year smoking: high baseline atherogenic risk",
+            ],
+            "context_from_history": (
+                "T2DM on metformin, active smoker (15 pack-years). No prior cardiac "
+                "events. HbA1c 8 months ago — current glycaemic control unknown."
+            ),
+            "suggested_opening_questions": [
+                "Is the discomfort still ongoing, and has the character changed since arrival?",
+                "Have you taken aspirin or GTN today?",
+                "Any similar episodes in the past — even mild ones you dismissed?",
+            ],
+            "watch_for": (
+                "IMMEDIATE: ECG within 60 seconds. Do not defer for full history — "
+                "STEMI door-to-balloon time is the priority."
+            ),
+        },
+    }
+
+    try:
+        await upsert_demo_cache("aarav_sharma_triage", payload)
+        logger.info("✓ demo_cache seeded: aarav_sharma_triage")
+    except Exception:
+        logger.warning("demo_cache seeding failed (non-fatal)", exc_info=True)

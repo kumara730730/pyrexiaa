@@ -73,21 +73,84 @@ CREATE TABLE IF NOT EXISTS demo_cache (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Seed default fallback scenario
+-- Seed default fallback scenario (legacy key — triage output only)
 INSERT INTO demo_cache (scenario, response_json)
 VALUES ('aarav_sharma', '{
-  "urgency_score": 72,
-  "urgency_level": "HIGH",
+  "urgency_score": 94,
+  "urgency_level": "CRITICAL",
   "reasoning_trace": [
-    "Patient reports severe abdominal pain (8/10)",
-    "Onset: 3 hours ago, sudden",
-    "Associated nausea and fever (38.5°C)",
-    "No prior history of similar episodes",
-    "Voice distress analysis suggests significant discomfort"
+    "ACS pattern: chest pressure + left arm radiation",
+    "Diaphoresis with sudden onset — high-risk presentation",
+    "Symptom onset during sleep/early morning — peak cardiac event window",
+    "Jaw radiation = triple-vessel pattern consistent with STEMI/NSTEMI",
+    "Diabetic patient: atypical presentation risk — real urgency likely higher than reported",
+    "15 pack-year smoking history compounds atherogenic risk"
   ],
-  "recommended_action": "Prioritise for physician assessment within 15 minutes",
-  "estimated_wait_minutes": 15,
-  "red_flags": ["Acute abdomen", "Fever with pain"],
-  "chief_complaint_refined": "Acute abdominal pain with fever and nausea"
+  "presenting_complaint": "52M presenting with sudden-onset chest tightness, left arm heaviness, and jaw radiation since 07:00. Associated diaphoresis.",
+  "red_flags": [
+    "ACS pattern — chest + arm + jaw radiation",
+    "Diaphoresis reported",
+    "Sudden onset in early morning — peak STEMI window",
+    "Diabetic with masked pain threshold"
+  ],
+  "suggested_doctor_questions": [
+    "Is the chest discomfort constant or does it come and go?",
+    "Rate your pain from 1 to 10 right now.",
+    "Have you taken any aspirin or GTN before coming in?"
+  ],
+  "recommended_doctor_specialty": "Cardiology"
 }'::jsonb)
-ON CONFLICT (scenario) DO NOTHING;
+ON CONFLICT (scenario) DO UPDATE SET response_json = EXCLUDED.response_json;
+
+-- Full triage record: patient + triage_output + brief
+INSERT INTO demo_cache (scenario, response_json)
+VALUES ('aarav_sharma_triage', '{
+  "patient": {
+    "name": "Aarav Sharma",
+    "age": 52,
+    "gender": "M",
+    "history_notes": "Type 2 Diabetes (metformin 500mg BD). Smoker — 15 pack-years. No prior cardiac events documented. Last clinic visit: 8 months ago for HbA1c monitoring."
+  },
+  "triage_output": {
+    "urgency_score": 94,
+    "urgency_level": "CRITICAL",
+    "reasoning_trace": [
+      "ACS pattern: chest pressure + left arm radiation",
+      "Diaphoresis with sudden onset — high-risk presentation",
+      "Symptom onset during sleep/early morning — peak cardiac event window",
+      "Jaw radiation = triple-vessel pattern consistent with STEMI/NSTEMI",
+      "Diabetic patient: atypical presentation risk — real urgency likely higher than reported",
+      "15 pack-year smoking history compounds atherogenic risk"
+    ],
+    "presenting_complaint": "52M presenting with sudden-onset chest tightness, left arm heaviness, and jaw radiation since 07:00. Associated diaphoresis.",
+    "red_flags": [
+      "ACS pattern — chest + arm + jaw radiation",
+      "Diaphoresis reported",
+      "Sudden onset in early morning — peak STEMI window",
+      "Diabetic with masked pain threshold"
+    ],
+    "suggested_doctor_questions": [
+      "Is the chest discomfort constant or does it come and go?",
+      "Rate your pain from 1 to 10 right now.",
+      "Have you taken any aspirin or GTN before coming in?"
+    ],
+    "recommended_doctor_specialty": "Cardiology"
+  },
+  "brief": {
+    "brief_summary": "52M diabetic smoker presenting with classical ACS-pattern symptoms: chest pressure, left arm heaviness, jaw radiation, and diaphoresis since 07:00. Atypical pain in diabetics — do not underestimate. Immediate assessment required.",
+    "priority_flags": [
+      "ACS pattern — chest + arm + jaw triple radiation",
+      "Diabetic: masked pain threshold, atypical presentation risk",
+      "Diaphoresis with sudden AM onset — peak STEMI window",
+      "15 pack-year smoking: high baseline atherogenic risk"
+    ],
+    "context_from_history": "T2DM on metformin, active smoker (15 pack-years). No prior cardiac events. HbA1c 8 months ago — current glycaemic control unknown.",
+    "suggested_opening_questions": [
+      "Is the discomfort still ongoing, and has the character changed since arrival?",
+      "Have you taken aspirin or GTN today?",
+      "Any similar episodes in the past — even mild ones you dismissed?"
+    ],
+    "watch_for": "IMMEDIATE: ECG within 60 seconds. Do not defer for full history — STEMI door-to-balloon time is the priority."
+  }
+}'::jsonb)
+ON CONFLICT (scenario) DO UPDATE SET response_json = EXCLUDED.response_json;

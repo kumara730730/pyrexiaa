@@ -108,36 +108,104 @@ Scoring guidance:
   0-19    NON_URGENT → Can wait / self-care"""
 
 BRIEF_SYSTEM_PROMPT = """\
-You are a clinical documentation AI for Pyrexia. Generate a concise, actionable pre-visit brief for the attending doctor.
+You are a clinical documentation AI for PriorIQ.
 
-The doctor has approximately 30 seconds to read this before entering the exam room.
-Be direct. Prioritise what the doctor needs to act on immediately.
-Do not repeat information that can be inferred. No filler.
+Generate a concise pre-visit brief for the attending doctor.
 
-Output ONLY this JSON — no prose, no markdown:
+CONTEXT: The doctor has 20–30 seconds to read this brief before entering the exam room.
+Write for a doctor, not a patient. Use clinical shorthand where appropriate.
+Prioritise what requires immediate action. Eliminate all filler.
 
-{
-  "brief_summary": "2-3 sentences. Chief complaint, severity, most important context.",
-  "priority_flags": ["flag 1", "flag 2", "flag 3"],
-  "context_from_history": "Relevant past medical info in one sentence. 'No known history' if none.",
-  "suggested_opening_questions": ["q1", "q2", "q3"],
-  "watch_for": "ONE thing to assess immediately upon entering the room."
-}"""
+PATIENT DATA:
+Name: {name} | Age: {age} | Gender: {gender}
+Medical History: {history_notes}
+Voice Distress Level: {voice_distress_score}/10
+
+TRIAGE ASSESSMENT:
+{urgency_json}
+
+OUTPUT ONLY this JSON — no prose, no markdown formatting:
+
+{{
+  "brief_summary": "2–3 sentences. Chief complaint, acuity, most actionable context. Clinical register.",
+  "priority_flags": ["Specific flag 1", "Specific flag 2", "Specific flag 3"],
+  "context_from_history": "Relevant comorbidities or recent history in one sentence. Write 'No significant history documented' if none.",
+  "suggested_opening_questions": ["Direct question 1?", "Direct question 2?", "Direct question 3?"],
+  "watch_for": "ONE thing to assess immediately upon entering the room. One sentence, maximum urgency."
+}}
+
+If urgency_level is CRITICAL: watch_for must start with "IMMEDIATE:" and describe the most time-critical action."""
 
 RERANK_PROMPT_TEMPLATE = """\
-You are a medical queue optimiser. Given a list of waiting patients, determine the optimal order they should be seen.
+You are a medical queue optimisation algorithm.
 
-RULES:
-1. CRITICAL patients always first, regardless of wait time
-2. Among same urgency_level: longer wait time first (fairness)
-3. voice_distress_score > 7 bumps priority by one position within same level
-4. Never reorder past a CRITICAL patient
+Given the current waiting patients, return the optimal order they should be seen.
 
-Patient queue:
+ORDERING RULES (apply in strict priority):
+1. urgency_level CRITICAL → always positions 1-N before any HIGH patient
+2. Within same urgency_level: longer wait_time_minutes → higher priority (fairness)
+3. If voice_distress_score > 7: bump this patient up by 1 position within their level
+4. Never reorder a lower-level patient above a CRITICAL patient under any circumstances
+
+CURRENT QUEUE:
 {queue_json}
 
-Return ONLY this JSON, no explanation:
+Return ONLY this JSON. No explanation. No other text.
 {{"ordered_ids": ["id1", "id2", "id3"]}}"""
+
+# ── Urgency-level rank (lower = higher clinical priority) ────────────────────
+
+URGENCY_RANK: dict[str, int] = {
+    "CRITICAL":   0,
+    "HIGH":       1,
+    "MODERATE":   2,
+    "LOW":        3,
+    "NON_URGENT": 4,
+}
+
+
+def _deterministic_rerank(queue_items: list[dict]) -> list[dict]:
+    """
+    Deterministic queue optimiser — zero LLM calls, O(n log n).
+
+    Rules (strict priority):
+      1. CRITICAL patients always occupy positions 1‑N.
+      2. Within the same urgency_level, longer wait_minutes → higher priority.
+      3. voice_distress_score > 7 bumps a patient up by ONE position *within*
+         their urgency level (swap with the neighbour above).
+      4. A lower-level patient is NEVER reordered above a CRITICAL patient.
+    """
+    from itertools import groupby
+
+    # ── 1. Bucket by urgency level ───────────────────────────────────────
+    for item in queue_items:
+        item.setdefault("wait_minutes", 0.0)
+        item.setdefault("voice_distress_score", 0.0)
+        level = str(item.get("urgency_level", "LOW")).upper()
+        item["_rank"] = URGENCY_RANK.get(level, 3)
+
+    # Sort first by rank (CRITICAL→…→NON_URGENT), then by wait desc
+    queue_items.sort(key=lambda x: (x["_rank"], -float(x["wait_minutes"])))
+
+    # ── 2. Within each level, apply voice-distress bump ──────────────────
+    #    Group contiguously by rank, bump high-distress patients up by 1.
+    result: list[dict] = []
+    for _rank, group in groupby(queue_items, key=lambda x: x["_rank"]):
+        bucket = list(group)
+        # Walk backward so earlier swaps don't shift later indices
+        for i in range(1, len(bucket)):
+            if bucket[i].get("voice_distress_score", 0) > 7:
+                # Only bump if the neighbour above does NOT also exceed 7
+                if bucket[i - 1].get("voice_distress_score", 0) <= 7:
+                    bucket[i - 1], bucket[i] = bucket[i], bucket[i - 1]
+        result.extend(bucket)
+
+    # ── 3. Clean up temp key ─────────────────────────────────────────────
+    for item in result:
+        item.pop("_rank", None)
+
+    return result
+
 
 # Standalone scoring prompt (used by legacy score_triage)
 SCORING_SYSTEM_PROMPT = """\
@@ -308,21 +376,22 @@ async def generate_brief(
     """
     client = _get_client()
 
-    user_content = (
-        "Generate a pre-visit brief for this patient.\n\n"
-        f"Patient: {patient_name}, {age or 'Unknown'}y, {gender or 'Unknown'}\n"
-        f"History notes: {history_notes or 'None available'}\n"
-        f"Voice distress score: {voice_distress_score}/10\n\n"
-        f"Triage assessment:\n{json.dumps(urgency_json, indent=2)}\n\n"
-        "Generate the brief now."
+    # Format the system prompt with patient-specific data
+    system = BRIEF_SYSTEM_PROMPT.format(
+        name=patient_name,
+        age=f"{age}y" if age else "Unknown",
+        gender=gender or "Unknown",
+        history_notes=history_notes or "None documented",
+        voice_distress_score=voice_distress_score,
+        urgency_json=json.dumps(urgency_json, indent=2),
     )
 
     message = await _retry_api_call(
         lambda: client.messages.create(
             model=SONNET_MODEL,
             max_tokens=1024,
-            system=BRIEF_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+            system=system,
+            messages=[{"role": "user", "content": "Generate the pre-visit brief now."}],
         )
     )
 
@@ -339,7 +408,7 @@ async def generate_brief(
         return {
             "brief_summary": raw,
             "priority_flags": [],
-            "context_from_history": history_notes or "No known history",
+            "context_from_history": history_notes or "No significant history documented",
             "suggested_opening_questions": [],
             "watch_for": "Review triage notes",
         }
@@ -428,12 +497,8 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
         return reordered
 
     except Exception as exc:
-        logger.warning("Haiku rerank failed (%s) — using Python fallback", exc)
-        return sorted(
-            queue_items,
-            key=lambda x: (x.get("urgency_score", 0) * 0.8) + (x.get("wait_minutes", 0) * 0.2),
-            reverse=True,
-        )
+        logger.warning("Haiku rerank failed (%s) — using deterministic fallback", exc)
+        return _deterministic_rerank(queue_items)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -441,7 +506,7 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def get_cached_demo_response(scenario: str = "aarav_sharma") -> dict:
+async def get_cached_demo_response(scenario: str = "aarav_sharma_triage") -> dict:
     """
     Fetch pre-cached triage output from Supabase ``demo_cache`` table.
 
@@ -465,19 +530,29 @@ async def get_cached_demo_response(scenario: str = "aarav_sharma") -> dict:
 
     # Hard-coded last-resort fallback
     return {
-        "urgency_score": 72,
-        "urgency_level": "HIGH",
+        "urgency_score": 94,
+        "urgency_level": "CRITICAL",
         "reasoning_trace": [
-            "Patient reports severe abdominal pain (8/10)",
-            "Onset: 3 hours ago, sudden",
-            "Associated nausea and fever (38.5°C)",
-            "No prior history of similar episodes",
-            "Voice distress analysis suggests significant discomfort",
+            "ACS pattern: chest pressure + left arm radiation",
+            "Diaphoresis with sudden onset — high-risk presentation",
+            "Symptom onset during sleep/early morning — peak cardiac event window",
+            "Jaw radiation = triple-vessel pattern consistent with STEMI/NSTEMI",
+            "Diabetic patient: atypical presentation risk — real urgency likely higher than reported",
+            "15 pack-year smoking history compounds atherogenic risk",
         ],
-        "recommended_action": "Prioritise for physician assessment within 15 minutes",
-        "estimated_wait_minutes": 15,
-        "red_flags": ["Acute abdomen", "Fever with pain"],
-        "chief_complaint_refined": "Acute abdominal pain with fever and nausea",
+        "presenting_complaint": "52M presenting with sudden-onset chest tightness, left arm heaviness, and jaw radiation since 07:00. Associated diaphoresis.",
+        "red_flags": [
+            "ACS pattern — chest + arm + jaw radiation",
+            "Diaphoresis reported",
+            "Sudden onset in early morning — peak STEMI window",
+            "Diabetic with masked pain threshold",
+        ],
+        "suggested_doctor_questions": [
+            "Is the chest discomfort constant or does it come and go?",
+            "Rate your pain from 1 to 10 right now.",
+            "Have you taken any aspirin or GTN before coming in?",
+        ],
+        "recommended_doctor_specialty": "Cardiology",
     }
 
 

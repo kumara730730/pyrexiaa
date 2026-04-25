@@ -48,8 +48,16 @@ async def lifespan(app: FastAPI):
     if missing:
         logger.warning("Missing environment variables: %s", ", ".join(missing))
 
-    # ── Pre-generate Aarav demo brief on startup ──────────────────────────
+    # ── Seed demo_cache table with Aarav triage record ─────────────────────
     import asyncio
+    from services import supabase_service
+
+    asyncio.create_task(
+        supabase_service.seed_demo_cache(),
+        name="demo-cache-seed",
+    )
+
+    # ── Pre-generate Aarav demo brief on startup ──────────────────────────
     asyncio.create_task(
         _pregenerate_demo_brief(),
         name="demo-brief-pregenerate",

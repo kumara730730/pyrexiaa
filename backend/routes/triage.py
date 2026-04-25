@@ -204,17 +204,25 @@ async def triage_message(req: TriageMessageRequest):
             # ── Sentinel: fallback response ───────────────────────────
             if token.startswith("__FALLBACK_JSON__:"):
                 fallback_json = token[len("__FALLBACK_JSON__:"):]
-                score_data = json.loads(fallback_json)
+                cached_data = json.loads(fallback_json)
+
+                # Extract nested data if it's the full triage + brief payload
+                score_data = cached_data.get("triage_output", cached_data)
+                cached_brief = cached_data.get("brief")
 
                 await _handle_scoring_complete(
                     req=req,
                     score_data=score_data,
                     patient=patient,
+                    cached_brief=cached_brief,
                 )
+
+                # Add a subtle flag for the UI to show a "⚡ cached" chip
+                cached_data["is_cached_fallback"] = True
 
                 yield {
                     "event": "score",
-                    "data": fallback_json,
+                    "data": json.dumps(cached_data),
                 }
                 return
 
@@ -245,13 +253,14 @@ async def _handle_scoring_complete(
     req: TriageMessageRequest,
     score_data: dict,
     patient: dict | None,
+    cached_brief: dict | None = None,
 ) -> None:
     """
     After scoring is detected:
     1. Persist score to Supabase
     2. Enqueue patient in Redis sorted set
     3. Broadcast queue update via Supabase Realtime
-    4. Fire brief builder (async, non-blocking)
+    4. Fire brief builder (async, non-blocking) or save cached brief
     """
     urgency_score = int(score_data.get("urgency_score", 50))
     urgency_level = score_data.get("urgency_level", "MODERATE")
@@ -283,11 +292,19 @@ async def _handle_scoring_complete(
     queue = await queue_service.get_queue(req.clinic_id)
     await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
 
-    # 4. Fire brief builder — async, non-blocking
-    asyncio.create_task(
-        _build_brief_async(req, score_data, patient),
-        name=f"brief-{req.session_id}",
-    )
+    if cached_brief:
+        # Pre-computed brief from fallback cache — save immediately without API call
+        await supabase_service.save_brief(
+            patient_id=req.patient_id,
+            session_id=req.session_id,
+            brief_text=json.dumps(cached_brief),
+        )
+    else:
+        # 4. Fire brief builder — async, non-blocking
+        asyncio.create_task(
+            _build_brief_async(req, score_data, patient),
+            name=f"brief-{req.session_id}",
+        )
 
 
 async def _build_brief_async(
