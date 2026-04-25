@@ -9,13 +9,14 @@ response is returned so the frontend can show a skeleton loader and retry.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from services import claude_service, supabase_service
+from services import claude_service, supabase_service, pdf_service
 
 router = APIRouter(prefix="/brief", tags=["Brief"])
 
@@ -136,4 +137,42 @@ async def get_brief_by_triage(session_id: UUID):
         session_id=brief.get("session_id"),
         brief_text=brief["brief_text"],
         created_at=brief.get("created_at"),
+    )
+
+
+# ── GET /brief/{patient_id}/pdf ──────────────────────────────────────────────
+
+
+@router.get("/{patient_id}/pdf")
+async def get_brief_pdf(patient_id: UUID):
+    """
+    Generate and return a PDF pre-visit brief for a patient.
+    """
+    brief = await supabase_service.get_brief_by_patient(patient_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="Brief not found or still generating")
+        
+    patient = await supabase_service.get_patient(patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+        
+    session_id = brief.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Brief is missing session context")
+        
+    session = await supabase_service.get_triage_session(UUID(session_id))
+    if not session:
+        raise HTTPException(status_code=404, detail="Triage session not found")
+        
+    pdf_buffer = pdf_service.generate_brief_pdf(patient, session, brief)
+    
+    # Format filename with patient name and date
+    patient_name = patient.get("name", "Unknown").replace(" ", "_").lower()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    filename = f"brief_{patient_name}_{date_str}.pdf"
+    
+    return StreamingResponse(
+        pdf_buffer, 
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )

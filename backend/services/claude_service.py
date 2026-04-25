@@ -86,18 +86,38 @@ Scoring guidance:
   0-19   NON_URGENT"""
 
 BRIEF_SYSTEM_PROMPT = """\
-You are a clinical documentation AI. Generate a concise, actionable pre-visit brief for the attending doctor.
-Output ONLY this JSON format:
-{{
-  "brief_summary": "2-3 sentences.",
-  "priority_flags": ["flag 1"],
-  "context_from_history": "Relevant history.",
-  "suggested_opening_questions": ["q1"],
-  "watch_for": "Critical finding"
-}}"""
+You are a clinical documentation AI for Pyrexia. Generate a concise, actionable pre-visit brief for the attending doctor.
+
+The doctor has approximately 30 seconds to read this before entering the exam room.
+Be direct. Prioritise what the doctor needs to act on immediately.
+Do not repeat information that can be inferred. No filler.
+
+Output ONLY this JSON — no prose, no markdown:
+
+{
+  "brief_summary": "2-3 sentences. Chief complaint, severity, most important context.",
+  "priority_flags": ["flag 1", "flag 2", "flag 3"],
+  "context_from_history": "Relevant past medical info in one sentence. 'No known history' if none.",
+  "suggested_opening_questions": ["q1", "q2", "q3"],
+  "watch_for": "ONE thing to assess immediately upon entering the room."
+}"""
+
+RERANK_PROMPT_TEMPLATE = """\
+You are a medical queue optimiser. Given a list of waiting patients, determine the optimal order they should be seen.
+
+RULES:
+1. CRITICAL patients always first, regardless of wait time
+2. Among same urgency_level: longer wait time first (fairness)
+3. voice_distress_score > 7 bumps priority by one position within same level
+4. Never reorder past a CRITICAL patient
+
+Patient queue:
+{queue_json}
+
+Return ONLY this JSON, no explanation:
+{{"ordered_ids": ["id1", "id2", "id3"]}}"""
 
 # ── Shared HTTP helper ───────────────────────────────────────────────────────
-
 def _get_headers() -> dict:
     """Build auth headers for the Gemini OpenAI-compatible endpoint."""
     return {
@@ -332,9 +352,117 @@ async def generate_brief(
                         json_lines.append(l)
                 raw = "\n".join(json_lines).strip()
             return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Brief response was not valid JSON — wrapping raw text")
+        return {
+            "brief_summary": raw,
+            "priority_flags": [],
+            "context_from_history": history_notes or "No known history",
+            "suggested_opening_questions": [],
+            "watch_for": "Review triage notes",
+        }
     except Exception as exc:
         logger.error(f"Brief generation failed: {exc}")
         return {"brief_summary": "Failed to generate brief."}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 3.  rerank_queue  — Gemini (fast + cheap)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def rerank_queue(queue_items: list[dict]) -> list[dict]:
+    """
+    Ask Gemini to optimally order patients by urgency, wait time, and distress.
+
+    Returns *queue_items* reordered.  On failure returns the original list.
+    """
+    if len(queue_items) <= 1:
+        return queue_items
+
+    # Compute wait_minutes for each item
+    current_time = time.time()
+    for item in queue_items:
+        enq = item.get("enqueued_at")
+        wait_minutes = 0.0
+        if isinstance(enq, (int, float)):
+            wait_minutes = (current_time - enq) / 60.0
+        elif isinstance(enq, str):
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(enq.replace("Z", "+00:00"))
+                wait_minutes = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+            except ValueError:
+                pass
+        elif hasattr(enq, "timestamp"):
+            wait_minutes = (current_time - enq.timestamp()) / 60.0
+        item["wait_minutes"] = max(0.0, wait_minutes)
+
+    # Prepare a minimal JSON for Gemini to save tokens
+    clean_queue = [
+        {
+            "id": str(item.get("patient_id") or item.get("id")),
+            "urgency_score": item.get("urgency_score", 0),
+            "urgency_level": str(item.get("urgency_level", "LOW")),
+            "wait_minutes": int(item.get("wait_minutes", 0)),
+            "voice_distress_score": item.get("voice_distress_score", 0),
+        }
+        for item in queue_items
+    ]
+    queue_json = json.dumps(clean_queue, indent=2)
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{BASE_URL}/chat/completions",
+                headers=_get_headers(),
+                json={
+                    "model": MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": RERANK_PROMPT_TEMPLATE.format(queue_json=queue_json),
+                        }
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 200,
+                }
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Gemini rerank error {response.status_code}: {response.text}")
+                return queue_items
+
+            result = response.json()
+            raw = result["choices"][0]["message"]["content"].strip()
+            
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw.rsplit("```", 1)[0].strip()
+
+            result = json.loads(raw)
+            ordered_ids = result.get("ordered_ids", [])
+
+            # Rebuild in recommended order
+            id_map = {
+                str(item.get("patient_id") or item.get("id")): item
+                for item in queue_items
+            }
+            reordered = []
+            for pid in ordered_ids:
+                pid_str = str(pid)
+                if pid_str in id_map:
+                    reordered.append(id_map.pop(pid_str))
+            # Append any items Gemini omitted (safety net)
+            reordered.extend(id_map.values())
+            return reordered
+
+    except Exception as exc:
+        logger.warning("Gemini rerank failed (%s) — using Python fallback", exc)
+        return sorted(
+            queue_items,
+            key=lambda x: (x.get("urgency_score", 0) * 0.8) + (x.get("wait_minutes", 0) * 0.2),
+            reverse=True,
+        )
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Compatibility Shims (keeping original function names)
