@@ -1,5 +1,5 @@
 """
-PriorIQ — Medical Triage System Backend
+Pyrexia — Medical Triage System Backend
 
 FastAPI application with CORS, health checks, and route registration.
 """
@@ -26,7 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s",
 )
-logger = logging.getLogger("prioriq")
+logger = logging.getLogger("pyrexia")
 
 
 # ── Lifespan (startup / shutdown) ─────────────────────────────────────────────
@@ -35,7 +35,7 @@ logger = logging.getLogger("prioriq")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialise shared resources on startup, tear down on shutdown."""
-    logger.info("PriorIQ starting up …")
+    logger.info("Pyrexia starting up …")
 
     # Validate mandatory env vars early
     required_vars = [
@@ -50,20 +50,25 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown: close Redis pool if it was opened
+    # Shutdown: close Redis pools if opened
     from services.queue_service import _pool
+    from services import claude_service
 
     if _pool is not None:
         await _pool.aclose()
-        logger.info("Redis connection closed")
+        logger.info("Redis connection (queue) closed")
 
-    logger.info("PriorIQ shut down")
+    if claude_service._redis is not None:
+        await claude_service._redis.aclose()
+        logger.info("Redis connection (claude) closed")
+
+    logger.info("Pyrexia shut down")
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="PriorIQ",
+    title="Pyrexia",
     description="AI-powered medical triage and queue management system",
     version="1.0.0",
     lifespan=lifespan,
@@ -129,13 +134,13 @@ app.include_router(voice.router)
 
 @app.get("/health", tags=["Health"])
 async def health():
-    return {"status": "ok", "service": "PriorIQ"}
+    return {"status": "ok", "service": "Pyrexia"}
 
 
 @app.get("/", tags=["Health"])
 async def root():
     return {
-        "service": "PriorIQ",
+        "service": "Pyrexia",
         "version": "1.0.0",
         "docs": "/docs",
     }

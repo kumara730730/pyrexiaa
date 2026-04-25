@@ -154,6 +154,14 @@ async def reorder_patient(
     return old_score
 
 
+async def remove_patient(clinic_id: str, patient_id: UUID) -> bool:
+    """Remove a patient from the queue (called in). Returns True if found."""
+    r = await get_redis()
+    key = _queue_key(clinic_id)
+    old_score = await _remove_patient_entry(r, key, patient_id)
+    return old_score is not None
+
+
 async def emergency_override(
     clinic_id: str,
     patient_id: UUID,

@@ -1,10 +1,17 @@
 """
 Triage routes — start a session, stream messages, and request final scoring.
+
+The ``/triage/message`` endpoint uses Redis-backed conversation history and
+SSE streaming.  When Claude returns a JSON scoring result the route
+automatically persists the score, fires the Brief Builder (async, non-blocking),
+pushes to the Redis queue, and broadcasts via Supabase Realtime.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -23,6 +30,7 @@ from services.realtime_service import broadcast_queue_update
 from utils.hard_rules import check_hard_rules
 
 router = APIRouter(prefix="/triage", tags=["Triage"])
+logger = logging.getLogger("triage")
 
 
 # ── POST /triage/start ────────────────────────────────────────────────────────
@@ -78,7 +86,7 @@ async def start_triage(req: TriageStartRequest):
             reasoning_trace=hr.reasoning_trace,
         )
 
-    # ── Normal flow: ask first follow-up via Claude ───────────────────────
+    # ── Normal flow: seed Redis history + ask first follow-up via Claude ──
     conversation_history = [
         {"role": "user", "content": f"Chief complaint: {req.chief_complaint}"}
     ]
@@ -87,9 +95,13 @@ async def start_triage(req: TriageStartRequest):
         conversation_history, language=req.language or "en"
     )
 
-    # Persist conversation
+    # Persist in Supabase
     await supabase_service.append_message(session_id, "user", req.chief_complaint)
     await supabase_service.append_message(session_id, "assistant", first_question)
+
+    # Seed Redis history for subsequent /triage/message calls
+    await claude_service._append_to_history(str(session_id), "user", f"Chief complaint: {req.chief_complaint}")
+    await claude_service._append_to_history(str(session_id), "assistant", first_question)
 
     return TriageStartResponse(
         session_id=session_id,
@@ -106,12 +118,16 @@ async def triage_message(req: TriageMessageRequest):
     """
     Continue the triage conversation — streams Claude's response via SSE.
 
-    Hard rules are checked on every patient message.
+    Flow:
+    1. Hard-rule check on every patient message
+    2. Append patient message to Redis history (done inside claude_service)
+    3. Stream Sonnet response tokens as SSE events
+    4. If response is JSON scoring → persist score, fire brief builder,
+       enqueue patient, broadcast queue update
     """
     # ── Hard-rule gate on the new message ─────────────────────────────────
     hr = check_hard_rules(req.message)
     if hr.triggered:
-        # Short-circuit: persist, enqueue, broadcast, return JSON (not SSE)
         await supabase_service.save_triage_score(
             session_id=req.session_id,
             urgency_score=hr.urgency_score,
@@ -136,37 +152,163 @@ async def triage_message(req: TriageMessageRequest):
             "reasoning_trace": hr.reasoning_trace,
         }
 
-    # ── Load conversation history from DB ─────────────────────────────────
-    session = await supabase_service.get_triage_session(req.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Triage session not found")
-
-    history: list[dict] = session.get("conversation_history", [])
-    history.append({"role": "user", "content": req.message})
-
-    # Persist the patient message
-    await supabase_service.append_message(req.session_id, "user", req.message)
+    # ── Fetch patient data for potential brief generation ─────────────────
+    patient = await supabase_service.get_patient(req.patient_id)
 
     # ── SSE streaming generator ───────────────────────────────────────────
     async def _event_generator():
         full_response: list[str] = []
-        async for token in claude_service.stream_triage_response(
-            history, language=req.language or "en"
+
+        async for token in claude_service.stream_triage_message(
+            session_id=str(req.session_id),
+            patient_message=req.message,
+            language=req.language or "en",
+            voice_distress_score=(
+                float(patient.get("voice_distress_score", 0))
+                if patient else 0.0
+            ),
         ):
+            # ── Sentinel: scoring complete ────────────────────────────
+            if token.startswith("__SCORE_JSON__:"):
+                score_json = token[len("__SCORE_JSON__:"):]
+                score_data = json.loads(score_json)
+
+                # Persist to Supabase & append to Supabase history
+                await _handle_scoring_complete(
+                    req=req,
+                    score_data=score_data,
+                    patient=patient,
+                )
+
+                yield {
+                    "event": "score",
+                    "data": score_json,
+                }
+                return
+
+            # ── Sentinel: fallback response ───────────────────────────
+            if token.startswith("__FALLBACK_JSON__:"):
+                fallback_json = token[len("__FALLBACK_JSON__:"):]
+                score_data = json.loads(fallback_json)
+
+                await _handle_scoring_complete(
+                    req=req,
+                    score_data=score_data,
+                    patient=patient,
+                )
+
+                yield {
+                    "event": "score",
+                    "data": fallback_json,
+                }
+                return
+
+            # ── Normal token ──────────────────────────────────────────
             full_response.append(token)
             yield {"event": "token", "data": json.dumps({"token": token})}
 
-        # Persist assistant response
+        # Stream finished with no JSON detected — normal conversational reply
         complete_text = "".join(full_response)
+
+        # Persist assistant response to Supabase (Redis already done in service)
+        await supabase_service.append_message(
+            req.session_id, "user", req.message
+        )
         await supabase_service.append_message(
             req.session_id, "assistant", complete_text
         )
+
         yield {
             "event": "done",
             "data": json.dumps({"full_response": complete_text}),
         }
 
     return EventSourceResponse(_event_generator())
+
+
+async def _handle_scoring_complete(
+    req: TriageMessageRequest,
+    score_data: dict,
+    patient: dict | None,
+) -> None:
+    """
+    After scoring is detected:
+    1. Persist score to Supabase
+    2. Enqueue patient in Redis sorted set
+    3. Broadcast queue update via Supabase Realtime
+    4. Fire brief builder (async, non-blocking)
+    """
+    urgency_score = int(score_data.get("urgency_score", 50))
+    urgency_level = score_data.get("urgency_level", "MODERATE")
+    reasoning_trace = score_data.get("reasoning_trace", [])
+    recommended_action = score_data.get("recommended_action")
+    estimated_wait = score_data.get("estimated_wait_minutes")
+
+    # 1. Persist score
+    await supabase_service.save_triage_score(
+        session_id=req.session_id,
+        urgency_score=urgency_score,
+        urgency_level=urgency_level,
+        reasoning_trace=reasoning_trace,
+        recommended_action=recommended_action,
+        estimated_wait_minutes=estimated_wait,
+    )
+
+    # 2. Enqueue
+    await queue_service.enqueue_patient(
+        clinic_id=req.clinic_id,
+        patient_id=req.patient_id,
+        urgency_score=urgency_score,
+        urgency_level=UrgencyLevel(urgency_level),
+        chief_complaint=score_data.get("chief_complaint_refined"),
+    )
+
+    # 3. Broadcast
+    queue = await queue_service.get_queue(req.clinic_id)
+    await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
+
+    # 4. Fire brief builder — async, non-blocking
+    asyncio.create_task(
+        _build_brief_async(req, score_data, patient),
+        name=f"brief-{req.session_id}",
+    )
+
+
+async def _build_brief_async(
+    req: TriageMessageRequest,
+    score_data: dict,
+    patient: dict | None,
+) -> None:
+    """Generate and persist a clinical brief in the background."""
+    try:
+        patient_name = patient.get("name", "Unknown") if patient else "Unknown"
+        age = patient.get("age") if patient else None
+        gender = patient.get("gender") if patient else None
+
+        # Build history notes from Redis conversation
+        history = await claude_service._load_history(str(req.session_id))
+        history_notes = "\n".join(
+            f"{'Patient' if m['role'] == 'user' else 'Triage AI'}: {m['content']}"
+            for m in history
+        )
+
+        brief = await claude_service.generate_brief(
+            patient_name=patient_name,
+            age=age,
+            gender=gender,
+            history_notes=history_notes,
+            urgency_json=score_data,
+        )
+
+        await supabase_service.save_brief(
+            patient_id=req.patient_id,
+            session_id=req.session_id,
+            brief_text=json.dumps(brief),
+        )
+        logger.info("Brief generated for session %s", req.session_id)
+
+    except Exception:
+        logger.exception("Background brief generation failed for session %s", req.session_id)
 
 
 # ── POST /triage/score ────────────────────────────────────────────────────────

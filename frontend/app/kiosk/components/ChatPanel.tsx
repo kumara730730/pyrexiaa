@@ -43,7 +43,7 @@ export default function ChatPanel({ messages, isStreaming, onSend }: Props) {
         </div>
         <div>
           <h2 className="text-base font-semibold" style={{ color: "#f0f6fc" }}>
-            PriorIQ Triage
+            Pyrexia Triage
           </h2>
           <div className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ background: "#3fb950" }} />

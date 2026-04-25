@@ -57,6 +57,23 @@ async def reorder_queue(req: ReorderRequest):
     return queue
 
 
+# ── POST /queue/call/{patient_id} ────────────────────────────────────────────
+
+
+@router.post("/call/{patient_id}")
+async def call_patient(patient_id: UUID, clinic_id: str):
+    """
+    Mark a patient as called — removes from queue and broadcasts update.
+    """
+    removed = await queue_service.remove_patient(clinic_id, patient_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Patient not in queue")
+
+    queue = await queue_service.get_queue(clinic_id)
+    await broadcast_queue_update(clinic_id, queue.model_dump(mode="json"))
+    return {"status": "called", "patient_id": str(patient_id)}
+
+
 # ── POST /queue/emergency ────────────────────────────────────────────────────
 
 

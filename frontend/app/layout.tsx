@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PriorIQ — Patient Check-In Kiosk",
+  title: "Pyrexia — Patient Check-In Kiosk",
   description:
     "AI-powered medical triage kiosk for outpatient clinic check-in.",
 };

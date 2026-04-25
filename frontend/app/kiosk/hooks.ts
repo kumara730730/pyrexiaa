@@ -164,11 +164,11 @@ export function useTriageChat() {
 
 function getGreeting(name: string, lang: Language): string {
   const greetings: Record<Language, string> = {
-    en: `Hello ${name}! I'm PriorIQ, your check-in assistant. Please describe what's brought you in today.`,
-    hi: `नमस्ते ${name}! मैं PriorIQ हूँ, आपका चेक-इन सहायक। कृपया बताएं कि आज आपको क्या तकलीफ है।`,
-    kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು PriorIQ, ನಿಮ್ಮ ಚೆಕ್-ಇನ್ ಸಹಾಯಕ. ಇಂದು ನಿಮ್ಮನ್ನು ಇಲ್ಲಿಗೆ ತಂದಿರುವುದನ್ನು ವಿವರಿಸಿ.`,
-    ta: `வணக்கம் ${name}! நான் PriorIQ, உங்கள் செக்-இன் உதவியாளர். இன்று உங்களை இங்கு கொண்டு வந்ததை விவரிக்கவும்.`,
-    te: `నమస్కారం ${name}! నేను PriorIQ, మీ చెక్-ఇన్ అసిస్టెంట్. ఈరోజు మిమ్మల్ని ఇక్కడకు తీసుకొచ్చిన విషయాన్ని వివరించండి.`,
+    en: `Hello ${name}! I'm Pyrexia, your check-in assistant. Please describe what's brought you in today.`,
+    hi: `नमस्ते ${name}! मैं Pyrexia हूँ, आपका चेक-इन सहायक। कृपया बताएं कि आज आपको क्या तकलीफ है।`,
+    kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು Pyrexia, ನಿಮ್ಮ ಚೆಕ್-ಇನ್ ಸಹಾಯಕ. ಇಂದು ನಿಮ್ಮನ್ನು ಇಲ್ಲಿಗೆ ತಂದಿರುವುದನ್ನು ವಿವರಿಸಿ.`,
+    ta: `வணக்கம் ${name}! நான் Pyrexia, உங்கள் செக்-இன் உதவியாளர். இன்று உங்களை இங்கு கொண்டு வந்ததை விவரிக்கவும்.`,
+    te: `నమస్కారం ${name}! నేను Pyrexia, మీ చెక్-ఇన్ అసిస్టెంట్. ఈరోజు మిమ్మల్ని ఇక్కడకు తీసుకొచ్చిన విషయాన్ని వివరించండి.`,
   };
   return greetings[lang];
 }
