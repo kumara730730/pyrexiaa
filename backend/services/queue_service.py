@@ -57,6 +57,7 @@ async def enqueue_patient(
     urgency_score: int,
     urgency_level: UrgencyLevel,
     chief_complaint: Optional[str] = None,
+    voice_distress_score: float = 0.0,
 ) -> None:
     """Add or update a patient in the clinic queue."""
     r = await get_redis()
@@ -68,6 +69,7 @@ async def enqueue_patient(
             "urgency_score": urgency_score,
             "urgency_level": urgency_level.value,
             "chief_complaint": chief_complaint,
+            "voice_distress_score": voice_distress_score,
             "enqueued_at": time.time(),
         }
     )
@@ -96,11 +98,18 @@ async def get_queue(clinic_id: str) -> QueueResponse:
     key = _queue_key(clinic_id)
     members = await r.zrevrange(key, 0, -1, withscores=False)
 
-    entries: list[QueueEntry] = []
-    for idx, raw in enumerate(members, start=1):
-        data = json.loads(raw)
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
+    from services.claude_service import rerank_queue
 
+    parsed_items = []
+    for raw in members:
+        parsed_items.append(json.loads(raw))
+
+    # Re-rank queue using Haiku
+    reordered_items = await rerank_queue(parsed_items)
+
+    entries: list[QueueEntry] = []
+    for idx, data in enumerate(reordered_items, start=1):
         entries.append(
             QueueEntry(
                 patient_id=data["patient_id"],
@@ -108,6 +117,7 @@ async def get_queue(clinic_id: str) -> QueueResponse:
                 urgency_score=data["urgency_score"],
                 urgency_level=UrgencyLevel(data["urgency_level"]),
                 chief_complaint=data.get("chief_complaint"),
+                voice_distress_score=data.get("voice_distress_score", 0.0),
                 position=idx,
                 enqueued_at=datetime.fromtimestamp(
                     data["enqueued_at"], tz=timezone.utc
@@ -183,6 +193,7 @@ async def emergency_override(
             "urgency_score": 100,
             "urgency_level": UrgencyLevel.CRITICAL.value,
             "chief_complaint": chief_complaint,
+            "voice_distress_score": 10.0,  # Emergency is max distress
             "enqueued_at": time.time(),
         }
     )

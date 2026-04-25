@@ -276,6 +276,7 @@ async def _handle_scoring_complete(
         urgency_score=urgency_score,
         urgency_level=UrgencyLevel(urgency_level),
         chief_complaint=score_data.get("chief_complaint_refined"),
+        voice_distress_score=float(req.voice_distress_score) if req.voice_distress_score is not None else float((patient and patient.get("voice_distress_score")) or 0.0),
     )
 
     # 3. Broadcast

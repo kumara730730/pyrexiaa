@@ -368,6 +368,11 @@ function BriefCard({
   brief: ParsedBrief;
   entry: QueueEntry | null;
 }) {
+  const handleExportPDF = () => {
+    if (!entry) return;
+    window.open(`${API}/brief/${entry.patient_id}/pdf`, "_blank");
+  };
+
   return (
     <div style={styles.briefContent}>
       {entry && (
@@ -385,6 +390,9 @@ function BriefCard({
           >
             {entry.urgency_level} — Score {entry.urgency_score}
           </span>
+          <button style={styles.exportButton} onClick={handleExportPDF}>
+            Export PDF
+          </button>
         </div>
       )}
 
@@ -662,11 +670,25 @@ const styles: Record<string, CSSProperties> = {
   briefHeader: {
     paddingBottom: "12px",
     borderBottom: "2px solid",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   briefUrgency: {
     fontSize: "14px",
     fontWeight: 700,
     fontFamily: "'JetBrains Mono', monospace",
+  },
+  exportButton: {
+    padding: "6px 12px",
+    borderRadius: "6px",
+    background: "rgba(255, 255, 255, 0.1)",
+    border: "1px solid rgba(255, 255, 255, 0.2)",
+    color: "#e6edf3",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+    transition: "background 0.2s ease",
   },
   briefSection: {
     paddingBottom: "12px",

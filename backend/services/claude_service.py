@@ -125,15 +125,19 @@ Output ONLY this JSON — no prose, no markdown:
 }"""
 
 RERANK_PROMPT_TEMPLATE = """\
-Given this queue of patients with urgency scores, return the optimal ordering
-as a JSON array of patient IDs.
+You are a medical queue optimiser. Given a list of waiting patients, determine the optimal order they should be seen.
 
-Factors: urgency_score (primary), wait_time_minutes (secondary for ties),
-voice_distress_score (tiebreaker).
+RULES:
+1. CRITICAL patients always first, regardless of wait time
+2. Among same urgency_level: longer wait time first (fairness)
+3. voice_distress_score > 7 bumps priority by one position within same level
+4. Never reorder past a CRITICAL patient
 
-Queue: {queue_json}
+Patient queue:
+{queue_json}
 
-Return ONLY: {{"ordered_ids": [id1, id2, ...]}}"""
+Return ONLY this JSON, no explanation:
+{{"ordered_ids": ["id1", "id2", "id3"]}}"""
 
 # Standalone scoring prompt (used by legacy score_triage)
 SCORING_SYSTEM_PROMPT = """\
@@ -355,8 +359,38 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
     if len(queue_items) <= 1:
         return queue_items
 
+    # Compute wait_minutes for each item
+    current_time = time.time()
+    for item in queue_items:
+        enq = item.get("enqueued_at")
+        wait_minutes = 0.0
+        if isinstance(enq, (int, float)):
+            wait_minutes = (current_time - enq) / 60.0
+        elif isinstance(enq, str):
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(enq.replace("Z", "+00:00"))
+                wait_minutes = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+            except ValueError:
+                pass
+        elif hasattr(enq, "timestamp"):
+            wait_minutes = (current_time - enq.timestamp()) / 60.0
+        item["wait_minutes"] = max(0.0, wait_minutes)
+
     client = _get_client()
-    queue_json = json.dumps(queue_items, indent=2)
+    
+    # Prepare a minimal JSON for Haiku to save tokens
+    clean_queue = [
+        {
+            "id": str(item.get("patient_id") or item.get("id")),
+            "urgency_score": item.get("urgency_score", 0),
+            "urgency_level": str(item.get("urgency_level", "LOW")),
+            "wait_minutes": int(item.get("wait_minutes", 0)),
+            "voice_distress_score": item.get("voice_distress_score", 0),
+        }
+        for item in queue_items
+    ]
+    queue_json = json.dumps(clean_queue, indent=2)
 
     try:
         message = await _retry_api_call(
@@ -381,7 +415,7 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
 
         # Rebuild in recommended order
         id_map = {
-            (item.get("patient_id") or item.get("id")): item
+            str(item.get("patient_id") or item.get("id")): item
             for item in queue_items
         }
         reordered = []
@@ -394,8 +428,12 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
         return reordered
 
     except Exception as exc:
-        logger.warning("Haiku rerank failed (%s) — keeping original order", exc)
-        return queue_items
+        logger.warning("Haiku rerank failed (%s) — using Python fallback", exc)
+        return sorted(
+            queue_items,
+            key=lambda x: (x.get("urgency_score", 0) * 0.8) + (x.get("wait_minutes", 0) * 0.2),
+            reverse=True,
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
