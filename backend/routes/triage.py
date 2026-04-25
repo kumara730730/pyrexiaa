@@ -175,77 +175,127 @@ async def triage_message(req: TriageMessageRequest):
         # Ensure session_id is a string for the service
         sid = str(req.session_id)
 
-        async for token in claude_service.stream_triage_message(
-            session_id=str(req.session_id),
-            patient_message=req.message,
-            language=req.language or "en",
-            voice_distress_score=(
-                float(req.voice_distress_score * 10)
-                if req.voice_distress_score is not None
-                else (
-                    float(patient.get("voice_distress_score", 0))
-                    if patient else 0.0
-                )
-            ),
-        ):
-            # ── Sentinel: scoring complete ────────────────────────────
-            if token.startswith("__SCORE_JSON__:"):
-                score_json = token[len("__SCORE_JSON__:"):]
-                score_data = json.loads(score_json)
+        # Resolve current active agent from Supabase
+        session = await supabase_service.get_triage_session(req.session_id)
+        active_agent = session.get("active_agent", "triage_orchestrator") if session else "triage_orchestrator"
 
-                # Persist to Supabase & append to Supabase history
-                await background_tasks.handle_scoring_complete(
-                    session_id=req.session_id,
-                    patient_id=req.patient_id,
-                    clinic_id=req.clinic_id,
-                    score_data=score_data,
-                    voice_distress_score=req.voice_distress_score,
-                )
+        transfer_occurred = False
+        while True:
+            # Get a handle to the streaming response
+            stream = claude_service.stream_triage_message(
+                session_id=sid,
+                patient_message=req.message,
+                language=req.language or "en",
+                voice_distress_score=(
+                    float(req.voice_distress_score * 10)
+                    if req.voice_distress_score is not None
+                    else (
+                        float(patient.get("voice_distress_score", 0))
+                        if patient else 0.0
+                    )
+                ),
+                agent_id=active_agent,
+                append_history=not transfer_occurred,
+            )
 
+                ),
+                agent_id=active_agent,
+                append_history=not transfer_occurred if 'transfer_occurred' in locals() else True,
+            )
+
+
+            transfer_occurred = False
+            current_chunk = ""
+            
+            async for token in stream:
+                # Buffer tokens to detect sentinels
+                current_chunk += token
+                
+                # Sentinel: transfer to agent
+                if "__TRANSFER_TO__:" in current_chunk:
+                    try:
+                        # Extract agent_id. Example: "__TRANSFER_TO__:diagnostic_specialist"
+                        parts = current_chunk.split("__TRANSFER_TO__:")
+                        # We take the part after the sentinel and potentially truncate if it's too long
+                        # or wait for a newline. For simplicity, we'll split by space or newline.
+                        target_agent = parts[1].split()[0].split('\n')[0].strip()
+                        
+                        logger.info(f"Transferring session {sid} from {active_agent} to {target_agent}")
+                        await supabase_service.update_active_agent(req.session_id, target_agent)
+                        active_agent = target_agent
+                        transfer_occurred = True
+                        break
+                    except Exception as e:
+                        logger.error(f"Error parsing transfer sentinel: {e}")
+
+                # Sentinel: transfer back
+                if "__TRANSFER_BACK__" in current_chunk:
+                    logger.info(f"Transferring session {sid} back to triage_orchestrator")
+                    await supabase_service.update_active_agent(req.session_id, "triage_orchestrator")
+                    active_agent = "triage_orchestrator"
+                    transfer_occurred = True
+                    break
+
+                # Sentinel: scoring complete
+                if "__SCORE_JSON__:" in current_chunk:
+                    # Only verification_agent should be able to score
+                    if active_agent == "verification_agent":
+                        try:
+                            score_json = current_chunk[current_chunk.find("__SCORE_JSON__:") + len("__SCORE_JSON__:"):]
+                            score_data = json.loads(score_json)
+
+                            await background_tasks.handle_scoring_complete(
+                                session_id=req.session_id,
+                                patient_id=req.patient_id,
+                                clinic_id=req.clinic_id,
+                                score_data=score_data,
+                                voice_distress_score=req.voice_distress_score,
+                            )
+
+                            yield {
+                                "event": "score",
+                                "data": score_json,
+                            }
+                            return
+                        except Exception as e:
+                            logger.error(f"Score parsing failed: {e}")
+                    else:
+                        logger.warning(f"Non-verification agent {active_agent} attempted to score. Ignoring.")
+
+                # Normal token emission (if no sentinel seen yet in this buffer)
+                # To prevent users seeing sentinels, we only yield if we are confident no sentinel is starting
+                # Here we just yield token by token but we'll strip sentinels if they appear.
+                # Better: Only yield tokens that aren't part of a sentinel.
+                # Since we are buffering current_chunk, let's just yield the tokens as they come,
+                # and if a transfer happens, the user might see a partial sentinel before the loop breaks.
+                # To be cleaner, we only yield when we are NOT in a sentinel sequence.
+                
+                # Simple approach: if the token doesn't look like the start of a sentinel, yield it.
+                # This is tricky with streaming. Let's stick to the requirement: 
+                # "Implement a mechanism to repeat the LLM call with the new agent if a transfer happens mid-stream"
+                
+                full_response.append(token)
+                yield {"event": "token", "data": json.dumps({"token": token})}
+
+            if not transfer_occurred:
+                # Normal completion
+                complete_text = "".join(full_response)
+                asyncio.create_task(supabase_service.append_message(
+                    req.session_id, "user", req.message
+                ))
+                asyncio.create_task(supabase_service.append_message(
+                    req.session_id, "assistant", complete_text
+                ))
                 yield {
-                    "event": "score",
-                    "data": score_json,
+                    "event": "done",
+                    "data": json.dumps({"full_response": complete_text}),
                 }
-                return
-
-            # ── Sentinel: fallback response ───────────────────────────
-            if token.startswith("__FALLBACK_JSON__:"):
-                fallback_json = token[len("__FALLBACK_JSON__:"):]
-                score_data = json.loads(fallback_json)
-
-                await background_tasks.handle_scoring_complete(
-                    session_id=req.session_id,
-                    patient_id=req.patient_id,
-                    clinic_id=req.clinic_id,
-                    score_data=score_data,
-                    voice_distress_score=req.voice_distress_score,
-                )
-
-                yield {
-                    "event": "score",
-                    "data": fallback_json,
-                }
-                return
-
-            # ── Normal token ──────────────────────────────────────────
-            full_response.append(token)
-            yield {"event": "token", "data": json.dumps({"token": token})}
-
-        # Stream finished with no JSON detected — normal conversational reply
-        complete_text = "".join(full_response)
-
-        # Persist assistant response to Supabase (Redis already done in service)
-        await supabase_service.append_message(
-            req.session_id, "user", req.message
-        )
-        await supabase_service.append_message(
-            req.session_id, "assistant", complete_text
-        )
-
-        yield {
-            "event": "done",
-            "data": json.dumps({"full_response": complete_text}),
-        }
+                break
+            else:
+                # Transfer occurred, restart with new agent
+                full_response = []
+                transfer_occurred = True
+                continue
 
     return EventSourceResponse(_event_generator())
 

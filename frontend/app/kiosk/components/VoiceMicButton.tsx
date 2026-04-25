@@ -32,9 +32,6 @@ export default function VoiceMicButton({
     onComplete: onTranscriptComplete,
   });
 
-  // Graceful fallback: hide entirely if unsupported
-  if (!isSupported) return null;
-
   const handleClick = useCallback(() => {
     if (disabled) return;
     if (isListening) {
@@ -43,6 +40,9 @@ export default function VoiceMicButton({
       startListening();
     }
   }, [isListening, disabled, startListening, stopListening]);
+
+  // Graceful fallback: hide entirely if unsupported
+  if (!isSupported) return null;
 
   return (
     <div className="voice-mic-wrapper" style={{ position: "relative" }}>

@@ -31,6 +31,28 @@ class PatientUpdate(BaseModel):
     language: Optional[str] = Field(None, max_length=10)
 
 
+class KioskPatientCreate(BaseModel):
+    """Simplified registration for kiosk walk-in patients."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    age: int = Field(..., ge=0, le=150)
+    gender: str = Field(..., max_length=20)
+    language: Optional[str] = Field("en", max_length=10)
+    clinic_id: str = Field(default="demo-clinic")
+
+
+class KioskPatientResponse(BaseModel):
+    """Kiosk patient record returned after registration."""
+
+    id: UUID
+    name: str
+    age: int
+    gender: str
+    language: str = "en"
+    clinic_id: str
+    created_at: datetime
+
+
 class PatientResponse(BaseModel):
     """Patient record returned from the API."""
 

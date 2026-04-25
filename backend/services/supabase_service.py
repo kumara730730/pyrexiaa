@@ -100,11 +100,20 @@ async def create_triage_session(
         "chief_complaint": chief_complaint,
         "language": language,
         "status": "active",
+        "active_agent": "triage_orchestrator",
         "conversation_history": [],
         "created_at": now,
     }
     result = client.table("triage_sessions").insert(row).execute()
     return result.data[0] if result.data else row
+
+
+async def update_active_agent(session_id: UUID, agent_id: str) -> None:
+    """Update the active_agent for a triage session."""
+    client = _get_client()
+    client.table("triage_sessions").update(
+        {"active_agent": agent_id}
+    ).eq("id", str(session_id)).execute()
 
 
 async def get_triage_session(session_id: UUID) -> Optional[dict]:

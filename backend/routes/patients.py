@@ -8,7 +8,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
-from models.patient import PatientCreate, PatientResponse, PatientUpdate
+from models.patient import (
+    PatientCreate,
+    PatientResponse,
+    PatientUpdate,
+    KioskPatientCreate,
+    KioskPatientResponse,
+)
 from services import supabase_service
 
 router = APIRouter(prefix="/patients", tags=["Patients"])
@@ -20,6 +26,16 @@ router = APIRouter(prefix="/patients", tags=["Patients"])
 @router.post("/register", response_model=PatientResponse, status_code=201)
 async def register_patient(req: PatientCreate):
     """Register a new patient at a clinic."""
+    data = req.model_dump()
+    patient = await supabase_service.create_patient(data)
+    return patient
+
+
+# ── POST /patients/kiosk-register ────────────────────────────────────────────
+
+@router.post("/kiosk-register", response_model=KioskPatientResponse, status_code=201)
+async def register_kiosk_patient(req: KioskPatientCreate):
+    """Register a new patient from the kiosk."""
     data = req.model_dump()
     patient = await supabase_service.create_patient(data)
     return patient
