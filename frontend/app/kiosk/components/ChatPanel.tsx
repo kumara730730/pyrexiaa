@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import type { ChatMessage } from "../types";
 import VoiceMicButton from "./VoiceMicButton";
 
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function ChatPanel({ messages, isStreaming, onSend, language = "en" }: Props) {
+  const t = useTranslations("kiosk");
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,11 +63,11 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
         </div>
         <div>
           <h2 className="text-base font-semibold" style={{ color: "#f0f6fc" }}>
-            Pyrexia Triage
+            {t("triage_header")}
           </h2>
           <div className="flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full" style={{ background: "#3fb950" }} />
-            <span className="text-xs" style={{ color: "#8b949e" }}>Active</span>
+            <span className="text-xs" style={{ color: "#8b949e" }}>{t("active")}</span>
           </div>
         </div>
       </header>
@@ -91,7 +93,7 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            placeholder="Describe your symptoms..."
+            placeholder={t("chat_placeholder")}
             disabled={isStreaming}
             className="flex-1 px-5 py-4 rounded-xl text-base border outline-none transition-all focus:ring-2 disabled:opacity-50"
             style={{

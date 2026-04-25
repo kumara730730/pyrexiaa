@@ -7,32 +7,28 @@ triage is short-circuited: urgency_score=100, urgency_level=CRITICAL.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 
 # ── Critical keyword list ─────────────────────────────────────────────────────
 
 CRITICAL_KEYWORDS: list[str] = [
-    "chest pain",
-    "chest tightness",
-    "can't breathe",
-    "not breathing",
-    "unconscious",
-    "unresponsive",
-    "seizure",
-    "stroke",
-    "left arm pain",
-    "jaw pain with chest",
-    "severe bleeding",
-    "overdose",
-    "anaphylaxis",
-    "allergic reaction severe",
-]
-
-# Pre-compile patterns for fast matching (word-boundary, case-insensitive)
-_CRITICAL_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(rf"\b{re.escape(kw)}\b", re.IGNORECASE) for kw in CRITICAL_KEYWORDS
+    # Cardiac
+    "chest pain", "chest tightness", "chest pressure", "heart attack",
+    "left arm pain", "left arm heavy", "jaw pain", "radiating pain",
+    # Respiratory
+    "can't breathe", "cannot breathe", "not breathing", "difficulty breathing",
+    "breathing stopped", "choking", "airway",
+    # Neurological
+    "stroke", "seizure", "unconscious", "unresponsive", "collapsed",
+    "sudden numbness", "face drooping", "arm weakness", "speech slurred",
+    # Trauma / Bleeding
+    "severe bleeding", "blood everywhere", "deep cut", "stabbed", "shot",
+    # Allergic
+    "anaphylaxis", "severe allergic", "epipen", "throat closing",
+    "tongue swelling",
+    # Overdose
+    "overdose", "took too many pills", "poisoning",
 ]
 
 
@@ -57,10 +53,8 @@ def check_hard_rules(text: str) -> HardRuleResult:
     if not text:
         return HardRuleResult()
 
-    matched: list[str] = []
-    for pattern, keyword in zip(_CRITICAL_PATTERNS, CRITICAL_KEYWORDS):
-        if pattern.search(text):
-            matched.append(keyword)
+    text_lower = text.lower()
+    matched: list[str] = [kw for kw in CRITICAL_KEYWORDS if kw in text_lower]
 
     if not matched:
         return HardRuleResult()

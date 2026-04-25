@@ -77,35 +77,68 @@ function useBrief(patientId: string | null) {
   const [brief, setBrief] = useState<ParsedBrief | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!patientId) {
       setBrief(null);
+      setError(null);
       return;
     }
     setLoading(true);
     setError(null);
+    let cancelled = false;
+    let attempt = 0;
+    const MAX_RETRIES = 5;
+    const RETRY_MS = 1500;
 
-    fetch(`${API}/brief/${patientId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(r.status === 404 ? "No brief yet" : "Failed to load");
-        return r.json();
-      })
-      .then((data: Brief) => {
-        try {
-          setBrief(JSON.parse(data.brief_text));
-        } catch {
-          setBrief({
-            brief_summary: data.brief_text,
-            priority_flags: [],
-            context_from_history: "None provided",
-            suggested_opening_questions: [],
-            watch_for: "",
-          });
-        }
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
+    const fetchBrief = () => {
+      fetch(`${API}/brief/${patientId}`)
+        .then((r) => {
+          if (cancelled) return null;
+          // 202 = brief still generating → retry
+          if (r.status === 202) {
+            attempt++;
+            if (attempt < MAX_RETRIES) {
+              retryRef.current = setTimeout(fetchBrief, RETRY_MS);
+              return null;
+            }
+            setError("Brief is still generating…");
+            setLoading(false);
+            return null;
+          }
+          if (!r.ok) throw new Error(r.status === 404 ? "No brief available" : "Failed to load");
+          return r.json();
+        })
+        .then((data: Brief | null) => {
+          if (cancelled || !data) return;
+          try {
+            setBrief(JSON.parse(data.brief_text));
+          } catch {
+            setBrief({
+              brief_summary: data.brief_text,
+              priority_flags: [],
+              context_from_history: "None provided",
+              suggested_opening_questions: [],
+              watch_for: "",
+            });
+          }
+          setLoading(false);
+        })
+        .catch((e: Error) => {
+          if (!cancelled) {
+            setError(e.message);
+            setLoading(false);
+          }
+        });
+    };
+
+    fetchBrief();
+
+    return () => {
+      cancelled = true;
+      if (retryRef.current) clearTimeout(retryRef.current);
+    };
   }, [patientId]);
 
   return { brief, loading, error };

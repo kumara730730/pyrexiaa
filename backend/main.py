@@ -48,6 +48,13 @@ async def lifespan(app: FastAPI):
     if missing:
         logger.warning("Missing environment variables: %s", ", ".join(missing))
 
+    # ── Pre-generate Aarav demo brief on startup ──────────────────────────
+    import asyncio
+    asyncio.create_task(
+        _pregenerate_demo_brief(),
+        name="demo-brief-pregenerate",
+    )
+
     yield
 
     # Shutdown: close Redis pools if opened
@@ -63,6 +70,53 @@ async def lifespan(app: FastAPI):
         logger.info("Redis connection (claude) closed")
 
     logger.info("Pyrexia shut down")
+
+
+async def _pregenerate_demo_brief() -> None:
+    """Pre-generate the clinical brief for the Aarav demo patient.
+
+    Runs on startup so the brief is instantly available when a doctor
+    clicks on Aarav during a pitch demo.  Gracefully skips on any error.
+    """
+    import json
+    from services import supabase_service, claude_service
+
+    try:
+        # Look up demo patient
+        demo_patient = await supabase_service.get_demo_patient("Aarav Sharma")
+        if not demo_patient:
+            logger.info("Demo patient 'Aarav Sharma' not found — skipping brief pre-generation")
+            return
+
+        patient_id = demo_patient["id"]
+
+        # Check if a brief already exists
+        existing = await supabase_service.get_brief_by_patient(patient_id)
+        if existing:
+            logger.info("Demo brief already exists for Aarav — skipping")
+            return
+
+        # Use the cached demo triage data
+        demo_urgency = await claude_service.get_cached_demo_response("aarav_sharma")
+
+        brief = await claude_service.generate_brief(
+            patient_name=demo_patient.get("name", "Aarav Sharma"),
+            age=demo_patient.get("age", 28),
+            gender=demo_patient.get("gender", "Male"),
+            history_notes="Patient reports severe abdominal pain (8/10). Onset 3 hours ago, sudden. Associated nausea and fever (38.5°C). No prior history of similar episodes.",
+            urgency_json=demo_urgency,
+            voice_distress_score=float(demo_patient.get("voice_distress_score", 6.5)),
+        )
+
+        await supabase_service.save_brief(
+            patient_id=patient_id,
+            session_id=patient_id,  # Use patient_id as a stand-in for demo
+            brief_text=json.dumps(brief),
+        )
+        logger.info("✓ Demo brief pre-generated for Aarav Sharma")
+
+    except Exception:
+        logger.warning("Demo brief pre-generation failed (non-fatal)", exc_info=True)
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────

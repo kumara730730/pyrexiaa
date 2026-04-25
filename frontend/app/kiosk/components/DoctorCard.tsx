@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import type { TriageResult, DoctorAssignment } from "../types";
 import { URGENCY_COLORS } from "../types";
 
@@ -40,6 +41,7 @@ const DEMO_DOCTORS: Record<string, DoctorAssignment> = {
 };
 
 export default function DoctorCard({ result, sessionId, patientName }: Props) {
+  const t = useTranslations("kiosk");
   const [assignment, setAssignment] = useState<DoctorAssignment | null>(null);
   const [loading, setLoading] = useState(true);
   const color = URGENCY_COLORS[result.urgency_level] || "#58a6ff";
@@ -90,10 +92,10 @@ export default function DoctorCard({ result, sessionId, patientName }: Props) {
             </svg>
           </div>
           <h2 className="text-2xl font-bold" style={{ color: "#f0f6fc" }}>
-            Check-In Complete
+            {t("checkin_complete")}
           </h2>
           <p className="text-base mt-1" style={{ color: "#8b949e" }}>
-            You&apos;ve been added to the queue, {patientName}
+            {t("added_to_queue", { name: patientName })}
           </p>
         </div>
 
@@ -116,9 +118,9 @@ export default function DoctorCard({ result, sessionId, patientName }: Props) {
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-6">
-            <InfoTile label="Room" value={assignment.room_number} icon="🚪" />
-            <InfoTile label="Wait" value={`~${assignment.estimated_wait_minutes} min`} icon="⏱" />
-            <InfoTile label="Position" value={`#${assignment.queue_position}`} icon="📋" />
+            <InfoTile label={t("room")} value={assignment.room_number} icon="🚪" />
+            <InfoTile label={t("wait")} value={`~${assignment.estimated_wait_minutes} min`} icon="⏱" />
+            <InfoTile label={t("position")} value={`#${assignment.queue_position}`} icon="📋" />
           </div>
 
           {/* Urgency badge */}
@@ -126,10 +128,10 @@ export default function DoctorCard({ result, sessionId, patientName }: Props) {
             style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
             <div className="w-3 h-3 rounded-full" style={{ background: color }} />
             <span className="text-sm font-medium" style={{ color }}>
-              Priority: {result.urgency_level}
+              {t("priority")}: {result.urgency_level}
             </span>
             <span className="text-sm ml-auto" style={{ color: "#8b949e" }}>
-              Score: {result.urgency_score}
+              {t("score")}: {result.urgency_score}
             </span>
           </div>
         </div>
@@ -138,10 +140,10 @@ export default function DoctorCard({ result, sessionId, patientName }: Props) {
         <div className="mt-6 px-5 py-4 rounded-xl text-center border"
           style={{ background: "#0d1117", borderColor: "#21262d" }}>
           <p className="text-base" style={{ color: "#8b949e" }}>
-            Please take a seat. A staff member will call you shortly.
+            {t("seat_message")}
           </p>
           <p className="text-xs mt-2" style={{ color: "#484f58" }}>
-            Wait time updates automatically every 30 seconds.
+            {t("wait_updates")}
           </p>
         </div>
 
@@ -150,7 +152,7 @@ export default function DoctorCard({ result, sessionId, patientName }: Props) {
           onClick={() => window.location.reload()}
           className="w-full mt-6 py-4 rounded-xl text-base font-medium border cursor-pointer transition-all hover:border-[#58a6ff]"
           style={{ background: "transparent", borderColor: "#21262d", color: "#8b949e" }}>
-          Start New Check-In
+          {t("new_checkin")}
         </button>
       </div>
     </div>

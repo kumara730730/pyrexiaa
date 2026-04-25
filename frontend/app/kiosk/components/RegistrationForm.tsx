@@ -1,14 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { RegistrationData, Language } from "../types";
-import { LANGUAGE_OPTIONS } from "../types";
+import LanguagePicker from "./LanguagePicker";
 
 interface Props {
   onComplete: (data: RegistrationData) => void;
 }
 
 export default function RegistrationForm({ onComplete }: Props) {
+  const t = useTranslations("kiosk");
+
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
   const [gender, setGender] = useState<"Male" | "Female" | "Other">("Male");
@@ -17,10 +20,10 @@ export default function RegistrationForm({ onComplete }: Props) {
 
   function validate(): boolean {
     const e: Record<string, string> = {};
-    if (!name.trim()) e.name = "Please enter your name";
+    if (!name.trim()) e.name = t("validation_name");
     const ageNum = parseInt(age);
     if (!age || isNaN(ageNum) || ageNum < 0 || ageNum > 150)
-      e.age = "Please enter a valid age";
+      e.age = t("validation_age");
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -46,11 +49,11 @@ export default function RegistrationForm({ onComplete }: Props) {
             </div>
             <h1 className="text-4xl font-bold tracking-tight"
               style={{ fontFamily: "Inter, sans-serif" }}>
-              Prior<span style={{ color: "#58a6ff" }}>IQ</span>
+              Pyre<span style={{ color: "#58a6ff" }}>xia</span>
             </h1>
           </div>
           <p className="text-xl" style={{ color: "#8b949e" }}>
-            Patient Check-In
+            {t("subtitle")}
           </p>
         </div>
 
@@ -66,13 +69,13 @@ export default function RegistrationForm({ onComplete }: Props) {
           {/* Name */}
           <div>
             <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
-              Full Name
+              {t("name_label")}
             </label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Enter your full name"
+              placeholder={t("name_placeholder")}
               className="w-full px-5 py-4 rounded-xl text-lg border outline-none transition-all focus:ring-2"
               style={{
                 background: "#161b22",
@@ -91,13 +94,13 @@ export default function RegistrationForm({ onComplete }: Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
-                Age
+                {t("age_label")}
               </label>
               <input
                 type="number"
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
-                placeholder="Age"
+                placeholder={t("age_placeholder")}
                 min={0}
                 max={150}
                 className="w-full px-5 py-4 rounded-xl text-lg border outline-none transition-all focus:ring-2"
@@ -113,7 +116,7 @@ export default function RegistrationForm({ onComplete }: Props) {
             </div>
             <div>
               <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
-                Gender
+                {t("gender_label")}
               </label>
               <select
                 value={gender}
@@ -124,34 +127,19 @@ export default function RegistrationForm({ onComplete }: Props) {
                   borderColor: "#21262d",
                   color: "#f0f6fc",
                 }}>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Other">Other</option>
+                <option value="Male">{t("gender_male")}</option>
+                <option value="Female">{t("gender_female")}</option>
+                <option value="Other">{t("gender_other")}</option>
               </select>
             </div>
           </div>
 
-          {/* Language */}
+          {/* Language Picker */}
           <div>
             <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
-              Preferred Language
+              {t("language_label")}
             </label>
-            <div className="grid grid-cols-5 gap-2">
-              {LANGUAGE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setLanguage(opt.value)}
-                  className="py-3 px-2 rounded-xl text-sm font-medium transition-all border"
-                  style={{
-                    background: language === opt.value ? "rgba(88,166,255,0.15)" : "#161b22",
-                    borderColor: language === opt.value ? "#58a6ff" : "#21262d",
-                    color: language === opt.value ? "#58a6ff" : "#8b949e",
-                  }}>
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+            <LanguagePicker value={language} onChange={setLanguage} />
           </div>
 
           {/* Submit */}
@@ -163,13 +151,13 @@ export default function RegistrationForm({ onComplete }: Props) {
               color: "#fff",
               boxShadow: "0 4px 20px rgba(88,166,255,0.3)",
             }}>
-            Begin Check-In
+            {t("begin_btn")}
           </button>
         </form>
 
         {/* Footer */}
         <p className="text-center text-sm mt-6" style={{ color: "#484f58" }}>
-          Your information is encrypted and processed securely.
+          {t("footer_privacy")}
         </p>
       </div>
     </div>
