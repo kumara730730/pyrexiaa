@@ -19,6 +19,7 @@ class QueueEntry(BaseModel):
     urgency_score: int = Field(..., ge=0, le=100)
     urgency_level: UrgencyLevel
     chief_complaint: Optional[str] = None
+    voice_distress_score: float = 0.0
     position: int = Field(..., ge=1, description="1-indexed position in queue")
     enqueued_at: datetime
 
