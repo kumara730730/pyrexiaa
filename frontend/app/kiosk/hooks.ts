@@ -24,7 +24,7 @@ export function useTriageChat() {
   );
 
   const sendMessage = useCallback(
-    async (text: string, language: Language) => {
+    async (text: string, language: Language, voiceDistressScore?: number) => {
       // Append user message
       setMessages((prev) => [...prev, { role: "user", content: text }]);
 
@@ -40,6 +40,7 @@ export function useTriageChat() {
           session_id: sessionIdRef.current || "demo-session",
           message: text,
           language,
+          ...(voiceDistressScore !== undefined && { voice_distress_score: voiceDistressScore }),
         });
 
         const response = await fetch(`${API_BASE}/triage/message`, {

@@ -164,8 +164,12 @@ async def triage_message(req: TriageMessageRequest):
             patient_message=req.message,
             language=req.language or "en",
             voice_distress_score=(
-                float(patient.get("voice_distress_score", 0))
-                if patient else 0.0
+                float(req.voice_distress_score * 10)
+                if req.voice_distress_score is not None
+                else (
+                    float(patient.get("voice_distress_score", 0))
+                    if patient else 0.0
+                )
             ),
         ):
             # ── Sentinel: scoring complete ────────────────────────────

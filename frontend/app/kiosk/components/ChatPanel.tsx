@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { ChatMessage } from "../types";
+import VoiceMicButton from "./VoiceMicButton";
 
 interface Props {
   messages: ChatMessage[];
   isStreaming: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, voiceDistressScore?: number) => void;
+  /** Language for voice recognition — maps to SpeechRecognition lang codes */
+  language?: string;
 }
 
-export default function ChatPanel({ messages, isStreaming, onSend }: Props) {
+export default function ChatPanel({ messages, isStreaming, onSend, language = "en" }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -28,6 +31,21 @@ export default function ChatPanel({ messages, isStreaming, onSend }: Props) {
     setInput("");
     inputRef.current?.focus();
   }
+
+  // Voice transcript → fill input → auto-send with distress score
+  const handleVoiceTranscript = useCallback(
+    (text: string, distressScore: number) => {
+      if (!text.trim() || isStreaming) return;
+      setInput(text);
+      // Auto-send with distress score after a brief visual delay
+      setTimeout(() => {
+        onSend(text.trim(), distressScore);
+        setInput("");
+        inputRef.current?.focus();
+      }, 300);
+    },
+    [isStreaming, onSend]
+  );
 
   return (
     <div className="flex flex-col h-screen">
@@ -66,7 +84,7 @@ export default function ChatPanel({ messages, isStreaming, onSend }: Props) {
 
       {/* Input Bar */}
       <div className="px-6 py-4 border-t" style={{ borderColor: "#21262d", background: "#0d1117" }}>
-        <div className="flex gap-3 max-w-3xl mx-auto">
+        <div className="flex gap-3 max-w-3xl mx-auto items-center">
           <input
             ref={inputRef}
             type="text"
@@ -83,6 +101,14 @@ export default function ChatPanel({ messages, isStreaming, onSend }: Props) {
             }}
             autoFocus
           />
+
+          {/* Voice Mic Button — progressive enhancement, hides if unsupported */}
+          <VoiceMicButton
+            language={language}
+            onTranscriptComplete={handleVoiceTranscript}
+            disabled={isStreaming}
+          />
+
           <button
             onClick={handleSend}
             disabled={isStreaming || !input.trim()}
