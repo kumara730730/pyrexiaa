@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import type { ChatMessage, TriageResult, Language } from "./types";
+import type { ChatMessage, TriageResult, Language, RegistrationData } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
@@ -40,42 +40,66 @@ export function useTriageChat() {
   const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
   const [isEmergency, setIsEmergency] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
+  const patientIdRef = useRef<string>("00000000-0000-0000-0000-000000000000");
+  const clinicIdRef = useRef<string>("demo-clinic");
 
   const startSession = useCallback(
-    async (name: string, language: Language, chiefComplaint: string) => {
+    async (data: RegistrationData) => {
       setIsStreaming(true);
       try {
+        const regResponse = await fetch(`${API_BASE}/patients/kiosk-register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: data.name,
+            age: data.age,
+            gender: data.gender,
+            language: data.language,
+            clinic_id: "demo-clinic"
+          }),
+        });
+
+        if (!regResponse.ok) {
+          console.warn("Kiosk registration failed, using fallback placeholders.");
+        } else {
+          const regData = await regResponse.json();
+          patientIdRef.current = regData.id;
+          if (regData.clinic_id) {
+            clinicIdRef.current = regData.clinic_id;
+          }
+        }
+
         const response = await fetch(`${API_BASE}/triage/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            patient_id: "00000000-0000-0000-0000-000000000000", // Placeholder if no registration
-            clinic_id: "demo-clinic",
-            chief_complaint: chiefComplaint,
-            language,
+            patient_id: patientIdRef.current,
+            clinic_id: clinicIdRef.current,
+            chief_complaint: data.symptoms,
+            language: data.language,
           }),
         });
 
         if (!response.ok) throw new Error("Failed to start triage");
-        const data = await response.json();
+        const sessionData = await response.json();
         
-        sessionIdRef.current = data.session_id;
+        sessionIdRef.current = sessionData.session_id;
         
-        if (data.hard_rule_triggered) {
+        if (sessionData.hard_rule_triggered) {
           setIsEmergency(true);
           setTriageResult({
-            urgency_score: data.urgency_score,
-            urgency_level: data.urgency_level,
-            reasoning_trace: data.reasoning_trace,
-            presenting_complaint: chiefComplaint,
+            urgency_score: sessionData.urgency_score,
+            urgency_level: sessionData.urgency_level,
+            reasoning_trace: sessionData.reasoning_trace,
+            presenting_complaint: data.symptoms,
             red_flags: [],
             suggested_doctor_questions: [],
             recommended_doctor_specialty: "Emergency",
           });
         } else {
           setMessages([
-            { role: "user", content: chiefComplaint },
-            { role: "assistant", content: data.initial_question }
+            { role: "user", content: data.symptoms },
+            { role: "assistant", content: sessionData.initial_question }
           ]);
         }
       } catch (error) {
@@ -159,6 +183,8 @@ export function useTriageChat() {
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
           let accumulated = "";
+          let currentEvent = "message";
+          let isScoreEvent = false;
 
           if (reader) {
             while (true) {
@@ -169,13 +195,15 @@ export function useTriageChat() {
               const lines = chunk.split("\n");
 
               for (const line of lines) {
-                if (line.startsWith("data:")) {
+                if (line.startsWith("event:")) {
+                  currentEvent = line.slice(6).trim();
+                } else if (line.startsWith("data:")) {
                   const raw = line.slice(5).trim();
                   if (!raw) continue;
                   try {
                     const parsed = JSON.parse(raw);
 
-                    if (parsed.token) {
+                    if (currentEvent === "token" && parsed.token) {
                       accumulated += parsed.token;
                       setMessages((prev) => {
                         const updated = [...prev];
@@ -186,9 +214,17 @@ export function useTriageChat() {
                         };
                         return updated;
                       });
-                    }
-
-                    if (parsed.full_response) {
+                    } else if (currentEvent === "score") {
+                      isScoreEvent = true;
+                      setTriageResult(parsed);
+                      setMessages((prev) => {
+                        const updated = [...prev];
+                        if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
+                          return updated.slice(0, -1);
+                        }
+                        return updated;
+                      });
+                    } else if (currentEvent === "done" && parsed.full_response) {
                       accumulated = parsed.full_response;
                     }
                   } catch {
@@ -199,29 +235,19 @@ export function useTriageChat() {
             }
           }
 
-          // Finalize the message
-          const finalContent = accumulated;
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = {
-              role: "assistant",
-              content: finalContent,
-              isStreaming: false,
-            };
-            return updated;
-          });
-
-          // Check if it's JSON triage output
-          const trimmed = finalContent.trim();
-          if (trimmed.startsWith("{") && trimmed.includes("urgency_score")) {
-            try {
-              const result: TriageResult = JSON.parse(trimmed);
-              // Remove the JSON message from chat
-              setMessages((prev) => prev.slice(0, -1));
-              setTriageResult(result);
-            } catch {
-              // Not valid JSON, keep as message
-            }
+          // Finalize the message if it wasn't just a score event
+          if (!isScoreEvent) {
+            setMessages((prev) => {
+              const updated = [...prev];
+              if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
+                updated[updated.length - 1] = {
+                  role: "assistant",
+                  content: accumulated,
+                  isStreaming: false,
+                };
+              }
+              return updated;
+            });
           }
         } else {
           // JSON response (hard-rule triggered on backend)
@@ -270,7 +296,3 @@ export function useTriageChat() {
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
-
-function delay(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
-}

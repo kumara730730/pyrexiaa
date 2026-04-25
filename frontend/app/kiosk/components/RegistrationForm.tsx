@@ -147,7 +147,7 @@ export default function RegistrationForm({ onComplete }: Props) {
           {/* Symptoms */}
           <div>
             <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
-              What's bringing you in today?
+              What&apos;s bringing you in today?
             </label>
             <textarea
               value={symptoms}

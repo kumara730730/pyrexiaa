@@ -160,21 +160,28 @@ async def stream_triage_message(
     patient_message: str,
     language: str = "en",
     voice_distress_score: float = 0.0,
+    agent_id: str = "triage_orchestrator",
     conversation_history: list[dict] | None = None,
+    append_history: bool = True,
 ) -> AsyncGenerator[str, None]:
     """
     Streams response from Gemini. If JSON is detected, emits scoring sentinel.
     """
-    await _append_to_history(session_id, "user", patient_message)
+    if append_history:
+        await _append_to_history(session_id, "user", patient_message)
 
     if conversation_history is None:
         conversation_history = await _load_history(session_id)
+
     
-    system_msg = {"role": "system", "content": TRIAGE_SYSTEM_PROMPT.format(
+    # Select system prompt based on agent_id
+    system_prompt_template = AGENT_REGISTRY.get(agent_id, AGENT_REGISTRY["triage_orchestrator"])
+    system_msg = {"role": "system", "content": system_prompt_template.format(
         language=language, voice_distress_score=voice_distress_score
     )}
     
     messages = [system_msg] + conversation_history
+
     
     full_response_text = []
     
@@ -265,15 +272,19 @@ async def get_triage_response(
     conversation_history: list[dict],
     language: str = "en",
     voice_distress_score: float = 0.0,
+    agent_id: str = "triage_orchestrator",
 ) -> str:
     """
     Get a single (non-streaming) response from Gemini.
-    Used for the very first greeting/question.
+    Used for the very first greeting/questions.
     """
-    system_msg = {"role": "system", "content": TRIAGE_SYSTEM_PROMPT.format(
+    # Select system prompt based on agent_id
+    system_prompt_template = AGENT_REGISTRY.get(agent_id, AGENT_REGISTRY["triage_orchestrator"])
+    system_msg = {"role": "system", "content": system_prompt_template.format(
         language=language, voice_distress_score=voice_distress_score
     )}
     messages = [system_msg] + conversation_history
+
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -284,7 +295,7 @@ async def get_triage_response(
                     "model": MODEL,
                     "messages": messages,
                     "temperature": 0.2,
-                    "max_tokens": 300,
+                    "max_tokens": 150,
                 }
             )
             if response.status_code != 200:

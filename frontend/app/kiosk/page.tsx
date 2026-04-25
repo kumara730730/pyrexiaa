@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { Stage, RegistrationData, TriageResult } from "./types";
+import type { Stage, RegistrationData } from "./types";
 import { useTriageChat } from "./hooks";
 import RegistrationForm from "./components/RegistrationForm";
 import ChatPanel from "./components/ChatPanel";
@@ -12,13 +12,13 @@ import EmergencyAlert from "./components/EmergencyAlert";
 export default function KioskPage() {
   const [stage, setStage] = useState<Stage>("registration");
   const [registration, setRegistration] = useState<RegistrationData | null>(null);
-  const { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession } = useTriageChat();
+  const { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef } = useTriageChat();
 
   // Stage 1 → 2
   const handleRegistration = useCallback(
     async (data: RegistrationData) => {
       setRegistration(data);
-      await startSession(data.name, data.language, data.symptoms);
+      await startSession(data);
       setStage("chat");
     },
     [startSession]
@@ -77,7 +77,7 @@ export default function KioskPage() {
       {stage === "assignment" && triageResult && registration && (
         <DoctorCard
           result={triageResult}
-          sessionId="demo-session"
+          sessionId={sessionIdRef.current || "demo-session"}
           patientName={registration.name}
         />
       )}
