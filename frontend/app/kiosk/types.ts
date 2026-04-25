@@ -15,6 +15,7 @@ export interface RegistrationData {
   age: number;
   gender: "Male" | "Female" | "Other";
   language: Language;
+  symptoms: string;
 }
 
 export interface ChatMessage {

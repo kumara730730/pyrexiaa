@@ -46,9 +46,9 @@ class TriageStartResponse(BaseModel):
 class TriageMessageRequest(BaseModel):
     """Patient replies during a triage conversation."""
 
-    session_id: UUID
-    patient_id: UUID
-    clinic_id: str
+    session_id: str
+    patient_id: Optional[UUID] = None
+    clinic_id: str = "demo-clinic"
     message: str = Field(..., min_length=1, max_length=5000)
     language: Optional[str] = Field("en", max_length=10)
     voice_distress_score: Optional[float] = Field(

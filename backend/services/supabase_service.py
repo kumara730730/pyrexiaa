@@ -85,9 +85,17 @@ async def create_triage_session(
     client = _get_client()
     session_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    
+    # Handle placeholder patient ID (dummy UUID)
+    pid_str = str(patient_id)
+    if pid_str == "00000000-0000-0000-0000-000000000000":
+        pid_val = None
+    else:
+        pid_val = pid_str
+
     row = {
         "id": session_id,
-        "patient_id": str(patient_id),
+        "patient_id": pid_val,
         "clinic_id": clinic_id,
         "chief_complaint": chief_complaint,
         "language": language,
@@ -164,9 +172,17 @@ async def save_brief(
     client = _get_client()
     brief_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    
+    # Handle placeholder patient ID (dummy UUID)
+    pid_str = str(patient_id)
+    if pid_str == "00000000-0000-0000-0000-000000000000":
+        pid_val = None
+    else:
+        pid_val = pid_str
+
     row = {
         "id": brief_id,
-        "patient_id": str(patient_id),
+        "patient_id": pid_val,
         "session_id": str(session_id),
         "brief_text": brief_text,
         "created_at": now,
