@@ -26,7 +26,7 @@ from models.triage import (
     UrgencyLevel,
 )
 from services import claude_service, supabase_service, queue_service
-from services.realtime_service import broadcast_queue_update
+from services.realtime_service import broadcast_queue_update, broadcast_emergency
 from utils.hard_rules import check_hard_rules
 
 router = APIRouter(prefix="/triage", tags=["Triage"])
@@ -66,17 +66,21 @@ async def start_triage(req: TriageStartRequest):
             reasoning_trace=hr.reasoning_trace,
             recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
         )
-        # Enqueue at top
-        await queue_service.enqueue_patient(
+        # Emergency override — force position 0 in Redis queue
+        await queue_service.emergency_override(
             clinic_id=req.clinic_id,
             patient_id=req.patient_id,
-            urgency_score=hr.urgency_score,
-            urgency_level=UrgencyLevel.CRITICAL,
             chief_complaint=req.chief_complaint,
         )
-        # Broadcast
+        # Broadcast queue update + emergency alarm to all doctor screens
         queue = await queue_service.get_queue(req.clinic_id)
         await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
+        await broadcast_emergency(
+            clinic_id=req.clinic_id,
+            patient_id=str(req.patient_id),
+            chief_complaint=req.chief_complaint,
+            matched_keywords=hr.matched_keywords,
+        )
 
         return TriageStartResponse(
             session_id=session_id,
@@ -135,21 +139,28 @@ async def triage_message(req: TriageMessageRequest):
             reasoning_trace=hr.reasoning_trace,
             recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
         )
-        await queue_service.enqueue_patient(
+        # Emergency override — force position 0 in Redis queue
+        await queue_service.emergency_override(
             clinic_id=req.clinic_id,
             patient_id=req.patient_id,
-            urgency_score=hr.urgency_score,
-            urgency_level=UrgencyLevel.CRITICAL,
             chief_complaint=req.message,
         )
+        # Broadcast queue update + emergency alarm to all doctor screens
         queue = await queue_service.get_queue(req.clinic_id)
         await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
+        await broadcast_emergency(
+            clinic_id=req.clinic_id,
+            patient_id=str(req.patient_id),
+            chief_complaint=req.message,
+            matched_keywords=hr.matched_keywords,
+        )
 
         return {
             "hard_rule_triggered": True,
             "urgency_score": hr.urgency_score,
             "urgency_level": UrgencyLevel.CRITICAL.value,
             "reasoning_trace": hr.reasoning_trace,
+            "matched_keywords": hr.matched_keywords,
         }
 
     # ── Fetch patient data for potential brief generation ─────────────────
@@ -289,6 +300,13 @@ async def _build_brief_async(
         age = patient.get("age") if patient else None
         gender = patient.get("gender") if patient else None
 
+        # Voice distress score — prefer request value, fall back to patient record
+        vds = (
+            float(req.voice_distress_score)
+            if req.voice_distress_score is not None
+            else float(patient.get("voice_distress_score", 0) if patient else 0)
+        )
+
         # Build history notes from Redis conversation
         history = await claude_service._load_history(str(req.session_id))
         history_notes = "\n".join(
@@ -302,6 +320,7 @@ async def _build_brief_async(
             gender=gender,
             history_notes=history_notes,
             urgency_json=score_data,
+            voice_distress_score=vds,
         )
 
         await supabase_service.save_brief(

@@ -5,6 +5,32 @@ import type { ChatMessage, TriageResult, Language } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+/* ── Client-side hard-rule keywords (mirrors backend) ─────────────────── */
+
+const CRITICAL_KEYWORDS: string[] = [
+  // Cardiac
+  "chest pain", "chest tightness", "chest pressure", "heart attack",
+  "left arm pain", "left arm heavy", "jaw pain", "radiating pain",
+  // Respiratory
+  "can't breathe", "cannot breathe", "not breathing", "difficulty breathing",
+  "breathing stopped", "choking", "airway",
+  // Neurological
+  "stroke", "seizure", "unconscious", "unresponsive", "collapsed",
+  "sudden numbness", "face drooping", "arm weakness", "speech slurred",
+  // Trauma / Bleeding
+  "severe bleeding", "blood everywhere", "deep cut", "stabbed", "shot",
+  // Allergic
+  "anaphylaxis", "severe allergic", "epipen", "throat closing",
+  "tongue swelling",
+  // Overdose
+  "overdose", "took too many pills", "poisoning",
+];
+
+function checkHardRulesClient(text: string): string[] {
+  const lower = text.toLowerCase();
+  return CRITICAL_KEYWORDS.filter((kw) => lower.includes(kw));
+}
+
 /**
  * Hook to manage SSE-streamed triage chat with the backend.
  */
@@ -12,6 +38,7 @@ export function useTriageChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
+  const [isEmergency, setIsEmergency] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
 
   const startSession = useCallback(
@@ -25,6 +52,40 @@ export function useTriageChat() {
 
   const sendMessage = useCallback(
     async (text: string, language: Language, voiceDistressScore?: number) => {
+      // ── Client-side hard-rule gate ─────────────────────────────────
+      const matchedKeywords = checkHardRulesClient(text);
+      if (matchedKeywords.length > 0) {
+        setMessages((prev) => [...prev, { role: "user", content: text }]);
+        setIsEmergency(true);
+        setTriageResult({
+          urgency_score: 100,
+          urgency_level: "CRITICAL",
+          reasoning_trace: [
+            `AUTO-CRITICAL: Hard rule keyword match — ${matchedKeywords.join(", ")}`,
+          ],
+          presenting_complaint: text,
+          red_flags: matchedKeywords,
+          suggested_doctor_questions: [],
+          recommended_doctor_specialty: "Emergency",
+        });
+
+        // Still try to notify the backend (fire-and-forget)
+        try {
+          fetch(`${API_BASE}/triage/message`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: sessionIdRef.current || "demo-session",
+              message: text,
+              language,
+            }),
+          });
+        } catch {
+          // Backend may be offline — kiosk already shows emergency screen
+        }
+        return;
+      }
+
       // Append user message
       setMessages((prev) => [...prev, { role: "user", content: text }]);
 
@@ -125,14 +186,15 @@ export function useTriageChat() {
             }
           }
         } else {
-          // JSON response (hard-rule triggered)
+          // JSON response (hard-rule triggered on backend)
           const data = await response.json();
           if (data.hard_rule_triggered) {
+            setIsEmergency(true);
             setMessages((prev) => {
               const updated = [...prev];
               updated[updated.length - 1] = {
                 role: "assistant",
-                content: "I've flagged this as requiring immediate attention.",
+                content: "⚠️ Immediate attention required.",
                 isStreaming: false,
               };
               return updated;
@@ -142,7 +204,7 @@ export function useTriageChat() {
               urgency_level: data.urgency_level,
               reasoning_trace: data.reasoning_trace || [],
               presenting_complaint: text,
-              red_flags: data.reasoning_trace || [],
+              red_flags: data.matched_keywords || data.reasoning_trace || [],
               suggested_doctor_questions: [],
               recommended_doctor_specialty: "Emergency",
             });
@@ -150,7 +212,7 @@ export function useTriageChat() {
         }
       } catch (error) {
         // Demo fallback: simulate AI responses when backend is offline
-        await simulateResponse(text, language, setMessages, setTriageResult);
+        await simulateResponse(text, language, setMessages, setTriageResult, setIsEmergency);
       } finally {
         setIsStreaming(false);
       }
@@ -158,10 +220,10 @@ export function useTriageChat() {
     []
   );
 
-  return { messages, isStreaming, triageResult, sendMessage, startSession, sessionIdRef };
+  return { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef };
 }
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
+/* ── Helpers ─────────────────────────────────────────────────────────── */
 
 function getGreeting(name: string, lang: Language): string {
   const greetings: Record<Language, string> = {
@@ -181,8 +243,38 @@ async function simulateResponse(
   userText: string,
   language: Language,
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
-  setTriageResult: React.Dispatch<React.SetStateAction<TriageResult | null>>
+  setTriageResult: React.Dispatch<React.SetStateAction<TriageResult | null>>,
+  setIsEmergency: React.Dispatch<React.SetStateAction<boolean>>
 ) {
+  // ── Demo-mode hard-rule check ──────────────────────────────────────
+  const matchedKeywords = checkHardRulesClient(userText);
+  if (matchedKeywords.length > 0) {
+    await delay(300);
+    setIsEmergency(true);
+    setMessages((prev) => {
+      const updated = [...prev];
+      updated[updated.length - 1] = {
+        role: "assistant",
+        content: "⚠️ Emergency team notified — please stay seated.",
+        isStreaming: false,
+      };
+      return updated;
+    });
+    setTriageResult({
+      urgency_score: 100,
+      urgency_level: "CRITICAL",
+      reasoning_trace: [
+        `AUTO-CRITICAL: Hard rule keyword match — ${matchedKeywords.join(", ")}`,
+      ],
+      presenting_complaint: userText,
+      red_flags: matchedKeywords,
+      suggested_doctor_questions: [],
+      recommended_doctor_specialty: "Emergency",
+    });
+    exchangeCount = 0;
+    return;
+  }
+
   exchangeCount++;
 
   const demoQuestions = [

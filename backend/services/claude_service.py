@@ -108,18 +108,21 @@ Scoring guidance:
   0-19    NON_URGENT → Can wait / self-care"""
 
 BRIEF_SYSTEM_PROMPT = """\
-You are a clinical documentation assistant. Generate a concise pre-visit
-doctor brief as a JSON object:
+You are a clinical documentation AI for Pyrexia. Generate a concise, actionable pre-visit brief for the attending doctor.
+
+The doctor has approximately 30 seconds to read this before entering the exam room.
+Be direct. Prioritise what the doctor needs to act on immediately.
+Do not repeat information that can be inferred. No filler.
+
+Output ONLY this JSON — no prose, no markdown:
 
 {
-  "brief_summary": "<2-3 sentence clinical summary>",
-  "priority_flags": ["<flag1>", "<flag2>"],
-  "context_from_history": "<relevant history notes or 'None provided'>",
-  "suggested_opening_questions": ["<q1>", "<q2>", "<q3>"],
-  "watch_for": "<key things the doctor should watch for>"
-}
-
-Return ONLY valid JSON, no markdown fences."""
+  "brief_summary": "2-3 sentences. Chief complaint, severity, most important context.",
+  "priority_flags": ["flag 1", "flag 2", "flag 3"],
+  "context_from_history": "Relevant past medical info in one sentence. 'No known history' if none.",
+  "suggested_opening_questions": ["q1", "q2", "q3"],
+  "watch_for": "ONE thing to assess immediately upon entering the room."
+}"""
 
 RERANK_PROMPT_TEMPLATE = """\
 Given this queue of patients with urgency scores, return the optimal ordering
@@ -291,6 +294,7 @@ async def generate_brief(
     gender: str | None,
     history_notes: str,
     urgency_json: dict,
+    voice_distress_score: float = 0.0,
 ) -> dict:
     """
     Generate a pre-visit doctor brief.
@@ -301,12 +305,12 @@ async def generate_brief(
     client = _get_client()
 
     user_content = (
-        f"Patient: {patient_name}\n"
-        f"Age: {age or 'Unknown'}\n"
-        f"Gender: {gender or 'Unknown'}\n"
-        f"History Notes:\n{history_notes}\n\n"
-        f"Triage Urgency Data:\n{json.dumps(urgency_json, indent=2)}\n\n"
-        "Generate the clinical pre-visit brief."
+        "Generate a pre-visit brief for this patient.\n\n"
+        f"Patient: {patient_name}, {age or 'Unknown'}y, {gender or 'Unknown'}\n"
+        f"History notes: {history_notes or 'None available'}\n"
+        f"Voice distress score: {voice_distress_score}/10\n\n"
+        f"Triage assessment:\n{json.dumps(urgency_json, indent=2)}\n\n"
+        "Generate the brief now."
     )
 
     message = await _retry_api_call(
@@ -331,7 +335,7 @@ async def generate_brief(
         return {
             "brief_summary": raw,
             "priority_flags": [],
-            "context_from_history": history_notes or "None provided",
+            "context_from_history": history_notes or "No known history",
             "suggested_opening_questions": [],
             "watch_for": "Review triage notes",
         }

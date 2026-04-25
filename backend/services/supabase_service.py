@@ -187,3 +187,33 @@ async def get_brief_by_patient(patient_id: UUID) -> Optional[dict]:
         .execute()
     )
     return result.data[0] if result.data else None
+
+
+async def get_brief_by_triage(session_id: UUID) -> Optional[dict]:
+    """Return the brief for a specific triage session."""
+    client = _get_client()
+    result = (
+        client.table("briefs")
+        .select("*")
+        .eq("session_id", str(session_id))
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+async def get_demo_patient(name: str = "Aarav Sharma") -> Optional[dict]:
+    """Look up the demo patient by name."""
+    client = _get_client()
+    try:
+        result = (
+            client.table("patients")
+            .select("*")
+            .ilike("name", f"%{name}%")
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception:
+        return None

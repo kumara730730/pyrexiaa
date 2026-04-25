@@ -7,11 +7,12 @@ import RegistrationForm from "./components/RegistrationForm";
 import ChatPanel from "./components/ChatPanel";
 import ScoringOverlay from "./components/ScoringOverlay";
 import DoctorCard from "./components/DoctorCard";
+import EmergencyAlert from "./components/EmergencyAlert";
 
 export default function KioskPage() {
   const [stage, setStage] = useState<Stage>("registration");
   const [registration, setRegistration] = useState<RegistrationData | null>(null);
-  const { messages, isStreaming, triageResult, sendMessage, startSession } = useTriageChat();
+  const { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession } = useTriageChat();
 
   // Stage 1 → 2
   const handleRegistration = useCallback(
@@ -36,8 +37,13 @@ export default function KioskPage() {
     setStage("assignment");
   }, []);
 
-  // Detect triage result from chat hook → move to scoring
-  if (triageResult && stage === "chat") {
+  // Detect emergency hard-rule trigger → jump straight to emergency screen
+  if (isEmergency && stage === "chat") {
+    setTimeout(() => setStage("emergency"), 0);
+  }
+
+  // Detect normal triage result from chat hook → move to scoring
+  if (triageResult && !isEmergency && stage === "chat") {
     // Use setTimeout to avoid setState during render
     setTimeout(() => setStage("scoring"), 0);
   }
@@ -55,6 +61,10 @@ export default function KioskPage() {
           onSend={handleSend}
           language={registration?.language}
         />
+      )}
+
+      {stage === "emergency" && registration && (
+        <EmergencyAlert patientName={registration.name} />
       )}
 
       {stage === "scoring" && triageResult && (

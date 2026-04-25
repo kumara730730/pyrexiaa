@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import type { TriageResult } from "../types";
 import { URGENCY_COLORS } from "../types";
 
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function ScoringOverlay({ result, onComplete }: Props) {
+  const t = useTranslations("kiosk");
   const [phase, setPhase] = useState<"counting" | "reveal">("counting");
   const [displayScore, setDisplayScore] = useState(0);
   const [flagsVisible, setFlagsVisible] = useState(0);
@@ -49,7 +51,7 @@ export default function ScoringOverlay({ result, onComplete }: Props) {
       <div className="text-center fade-in-up">
         {phase === "counting" && (
           <p className="text-lg mb-8 tracking-widest uppercase font-medium"
-            style={{ color: "#8b949e" }}>Analysing your symptoms…</p>
+            style={{ color: "#8b949e" }}>{t("scoring")}</p>
         )}
 
         <div className="relative inline-flex items-center justify-center mb-8">

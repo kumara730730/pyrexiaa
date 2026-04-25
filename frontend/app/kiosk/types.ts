@@ -1,4 +1,4 @@
-export type Stage = "registration" | "chat" | "scoring" | "assignment";
+export type Stage = "registration" | "chat" | "scoring" | "assignment" | "emergency";
 
 export type Language = "en" | "hi" | "kn" | "ta" | "te";
 
