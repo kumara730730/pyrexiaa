@@ -7,4 +7,6 @@ __pycache__/
 .env.*.local
 dist/
 build/
-.DS_Store
+.DS_Storeaude
+.claude
+.playwright-mcp
