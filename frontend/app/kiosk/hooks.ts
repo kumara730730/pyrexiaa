@@ -42,10 +42,48 @@ export function useTriageChat() {
   const sessionIdRef = useRef<string | null>(null);
 
   const startSession = useCallback(
-    async (name: string, language: Language) => {
-      // Seed the first agent message
-      const greeting = getGreeting(name, language);
-      setMessages([{ role: "assistant", content: greeting }]);
+    async (name: string, language: Language, chiefComplaint: string) => {
+      setIsStreaming(true);
+      try {
+        const response = await fetch(`${API_BASE}/triage/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patient_id: "00000000-0000-0000-0000-000000000000", // Placeholder if no registration
+            clinic_id: "demo-clinic",
+            chief_complaint: chiefComplaint,
+            language,
+          }),
+        });
+
+        if (!response.ok) throw new Error("Failed to start triage");
+        const data = await response.json();
+        
+        sessionIdRef.current = data.session_id;
+        
+        if (data.hard_rule_triggered) {
+          setIsEmergency(true);
+          setTriageResult({
+            urgency_score: data.urgency_score,
+            urgency_level: data.urgency_level,
+            reasoning_trace: data.reasoning_trace,
+            presenting_complaint: chiefComplaint,
+            red_flags: [],
+            suggested_doctor_questions: [],
+            recommended_doctor_specialty: "Emergency",
+          });
+        } else {
+          setMessages([
+            { role: "user", content: chiefComplaint },
+            { role: "assistant", content: data.initial_question }
+          ]);
+        }
+      } catch (error) {
+        console.error("Start session failed:", error);
+        setMessages([{ role: "assistant", content: "I'm sorry, I'm having trouble starting the session. Please try again." }]);
+      } finally {
+        setIsStreaming(false);
+      }
     },
     []
   );
@@ -211,8 +249,16 @@ export function useTriageChat() {
           }
         }
       } catch (error) {
-        // Demo fallback: simulate AI responses when backend is offline
-        await simulateResponse(text, language, setMessages, setTriageResult, setIsEmergency);
+        console.error("Send message failed:", error);
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: "I'm sorry, I'm having trouble connecting to the medical assistant. Please check your connection or wait a moment.",
+            isStreaming: false,
+          };
+          return updated;
+        });
       } finally {
         setIsStreaming(false);
       }
@@ -224,123 +270,6 @@ export function useTriageChat() {
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
-
-function getGreeting(name: string, lang: Language): string {
-  const greetings: Record<Language, string> = {
-    en: `Hello ${name}! I'm Pyrexia, your check-in assistant. Please describe what's brought you in today.`,
-    hi: `नमस्ते ${name}! मैं Pyrexia हूँ, आपका चेक-इन सहायक। कृपया बताएं कि आज आपको क्या तकलीफ है।`,
-    kn: `ನಮಸ್ಕಾರ ${name}! ನಾನು Pyrexia, ನಿಮ್ಮ ಚೆಕ್-ಇನ್ ಸಹಾಯಕ. ಇಂದು ನಿಮ್ಮನ್ನು ಇಲ್ಲಿಗೆ ತಂದಿರುವುದನ್ನು ವಿವರಿಸಿ.`,
-    ta: `வணக்கம் ${name}! நான் Pyrexia, உங்கள் செக்-இன் உதவியாளர். இன்று உங்களை இங்கு கொண்டு வந்ததை விவரிக்கவும்.`,
-    te: `నమస్కారం ${name}! నేను Pyrexia, మీ చెక్-ఇన్ అసిస్టెంట్. ఈరోజు మిమ్మల్ని ఇక్కడకు తీసుకొచ్చిన విషయాన్ని వివరించండి.`,
-  };
-  return greetings[lang];
-}
-
-// Exchange counter for demo mode
-let exchangeCount = 0;
-
-async function simulateResponse(
-  userText: string,
-  language: Language,
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
-  setTriageResult: React.Dispatch<React.SetStateAction<TriageResult | null>>,
-  setIsEmergency: React.Dispatch<React.SetStateAction<boolean>>
-) {
-  // ── Demo-mode hard-rule check ──────────────────────────────────────
-  const matchedKeywords = checkHardRulesClient(userText);
-  if (matchedKeywords.length > 0) {
-    await delay(300);
-    setIsEmergency(true);
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[updated.length - 1] = {
-        role: "assistant",
-        content: "⚠️ Emergency team notified — please stay seated.",
-        isStreaming: false,
-      };
-      return updated;
-    });
-    setTriageResult({
-      urgency_score: 100,
-      urgency_level: "CRITICAL",
-      reasoning_trace: [
-        `AUTO-CRITICAL: Hard rule keyword match — ${matchedKeywords.join(", ")}`,
-      ],
-      presenting_complaint: userText,
-      red_flags: matchedKeywords,
-      suggested_doctor_questions: [],
-      recommended_doctor_specialty: "Emergency",
-    });
-    exchangeCount = 0;
-    return;
-  }
-
-  exchangeCount++;
-
-  const demoQuestions = [
-    "I understand. Can you tell me when this started — was it sudden or gradual?",
-    "On a scale of 1 to 10, how would you rate the severity right now?",
-    "Have you noticed any other symptoms alongside this — such as dizziness, nausea, or changes in vision?",
-    "Do you have any existing medical conditions or take any regular medications?",
-  ];
-
-  if (exchangeCount >= 4) {
-    // Output triage JSON
-    const result: TriageResult = {
-      urgency_score: 62,
-      urgency_level: "MODERATE",
-      reasoning_trace: [
-        "Symptom duration exceeds 48 hours",
-        "Moderate severity rating (6/10)",
-        "No red-flag features identified",
-        "Stable vital sign indicators based on patient report",
-      ],
-      presenting_complaint: userText,
-      red_flags: [],
-      suggested_doctor_questions: [
-        "Confirm onset timeline and progression pattern",
-        "Screen for associated systemic symptoms",
-        "Review current medication interactions",
-      ],
-      recommended_doctor_specialty: "General Practice",
-    };
-
-    // Simulate streaming delay then reveal result
-    await delay(1500);
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[updated.length - 1] = {
-        role: "assistant",
-        content: "Analysing your responses...",
-        isStreaming: false,
-      };
-      return updated;
-    });
-
-    await delay(500);
-    setMessages((prev) => prev.slice(0, -1));
-    setTriageResult(result);
-    exchangeCount = 0;
-    return;
-  }
-
-  const question = demoQuestions[exchangeCount - 1] || demoQuestions[0];
-
-  // Simulate token-by-token streaming
-  for (let i = 0; i < question.length; i++) {
-    await delay(15);
-    const partial = question.slice(0, i + 1);
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[updated.length - 1] = {
-        role: "assistant",
-        content: partial,
-        isStreaming: i < question.length - 1,
-      };
-      return updated;
-    });
-  }
-}
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));

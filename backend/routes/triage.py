@@ -25,7 +25,7 @@ from models.triage import (
     TriageScoreResponse,
     UrgencyLevel,
 )
-from services import claude_service, supabase_service, queue_service
+from services import claude_service, supabase_service, queue_service, background_tasks
 from services.realtime_service import broadcast_queue_update, broadcast_emergency
 from utils.hard_rules import check_hard_rules
 
@@ -164,11 +164,16 @@ async def triage_message(req: TriageMessageRequest):
         }
 
     # ── Fetch patient data for potential brief generation ─────────────────
-    patient = await supabase_service.get_patient(req.patient_id)
+    patient = None
+    if req.patient_id:
+        patient = await supabase_service.get_patient(req.patient_id)
 
     # ── SSE streaming generator ───────────────────────────────────────────
     async def _event_generator():
         full_response: list[str] = []
+        
+        # Ensure session_id is a string for the service
+        sid = str(req.session_id)
 
         async for token in claude_service.stream_triage_message(
             session_id=str(req.session_id),
@@ -189,10 +194,12 @@ async def triage_message(req: TriageMessageRequest):
                 score_data = json.loads(score_json)
 
                 # Persist to Supabase & append to Supabase history
-                await _handle_scoring_complete(
-                    req=req,
+                await background_tasks.handle_scoring_complete(
+                    session_id=req.session_id,
+                    patient_id=req.patient_id,
+                    clinic_id=req.clinic_id,
                     score_data=score_data,
-                    patient=patient,
+                    voice_distress_score=req.voice_distress_score,
                 )
 
                 yield {
@@ -206,10 +213,12 @@ async def triage_message(req: TriageMessageRequest):
                 fallback_json = token[len("__FALLBACK_JSON__:"):]
                 score_data = json.loads(fallback_json)
 
-                await _handle_scoring_complete(
-                    req=req,
+                await background_tasks.handle_scoring_complete(
+                    session_id=req.session_id,
+                    patient_id=req.patient_id,
+                    clinic_id=req.clinic_id,
                     score_data=score_data,
-                    patient=patient,
+                    voice_distress_score=req.voice_distress_score,
                 )
 
                 yield {
@@ -241,99 +250,6 @@ async def triage_message(req: TriageMessageRequest):
     return EventSourceResponse(_event_generator())
 
 
-async def _handle_scoring_complete(
-    req: TriageMessageRequest,
-    score_data: dict,
-    patient: dict | None,
-) -> None:
-    """
-    After scoring is detected:
-    1. Persist score to Supabase
-    2. Enqueue patient in Redis sorted set
-    3. Broadcast queue update via Supabase Realtime
-    4. Fire brief builder (async, non-blocking)
-    """
-    urgency_score = int(score_data.get("urgency_score", 50))
-    urgency_level = score_data.get("urgency_level", "MODERATE")
-    reasoning_trace = score_data.get("reasoning_trace", [])
-    recommended_action = score_data.get("recommended_action")
-    estimated_wait = score_data.get("estimated_wait_minutes")
-
-    # 1. Persist score
-    await supabase_service.save_triage_score(
-        session_id=req.session_id,
-        urgency_score=urgency_score,
-        urgency_level=urgency_level,
-        reasoning_trace=reasoning_trace,
-        recommended_action=recommended_action,
-        estimated_wait_minutes=estimated_wait,
-    )
-
-    # 2. Enqueue
-    await queue_service.enqueue_patient(
-        clinic_id=req.clinic_id,
-        patient_id=req.patient_id,
-        urgency_score=urgency_score,
-        urgency_level=UrgencyLevel(urgency_level),
-        chief_complaint=score_data.get("chief_complaint_refined"),
-        voice_distress_score=float(req.voice_distress_score) if req.voice_distress_score is not None else float((patient and patient.get("voice_distress_score")) or 0.0),
-    )
-
-    # 3. Broadcast
-    queue = await queue_service.get_queue(req.clinic_id)
-    await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
-
-    # 4. Fire brief builder — async, non-blocking
-    asyncio.create_task(
-        _build_brief_async(req, score_data, patient),
-        name=f"brief-{req.session_id}",
-    )
-
-
-async def _build_brief_async(
-    req: TriageMessageRequest,
-    score_data: dict,
-    patient: dict | None,
-) -> None:
-    """Generate and persist a clinical brief in the background."""
-    try:
-        patient_name = patient.get("name", "Unknown") if patient else "Unknown"
-        age = patient.get("age") if patient else None
-        gender = patient.get("gender") if patient else None
-
-        # Voice distress score — prefer request value, fall back to patient record
-        vds = (
-            float(req.voice_distress_score)
-            if req.voice_distress_score is not None
-            else float(patient.get("voice_distress_score", 0) if patient else 0)
-        )
-
-        # Build history notes from Redis conversation
-        history = await claude_service._load_history(str(req.session_id))
-        history_notes = "\n".join(
-            f"{'Patient' if m['role'] == 'user' else 'Triage AI'}: {m['content']}"
-            for m in history
-        )
-
-        brief = await claude_service.generate_brief(
-            patient_name=patient_name,
-            age=age,
-            gender=gender,
-            history_notes=history_notes,
-            urgency_json=score_data,
-            voice_distress_score=vds,
-        )
-
-        await supabase_service.save_brief(
-            patient_id=req.patient_id,
-            session_id=req.session_id,
-            brief_text=json.dumps(brief),
-        )
-        logger.info("Brief generated for session %s", req.session_id)
-
-    except Exception:
-        logger.exception("Background brief generation failed for session %s", req.session_id)
-
 
 # ── POST /triage/score ────────────────────────────────────────────────────────
 
@@ -358,41 +274,20 @@ async def score_triage(req: TriageScoreRequest):
     # Ask Claude for the score
     score_data = await claude_service.score_triage(history)
 
-    urgency_score = int(score_data.get("urgency_score", 50))
-    urgency_level = UrgencyLevel(score_data.get("urgency_level", "MODERATE"))
-    reasoning_trace = score_data.get("reasoning_trace", [])
-    recommended_action = score_data.get("recommended_action")
-    estimated_wait = score_data.get("estimated_wait_minutes")
-
-    # Persist
-    await supabase_service.save_triage_score(
+    # Use background tasks for all persistence and enqueuing
+    await background_tasks.handle_scoring_complete(
         session_id=req.session_id,
-        urgency_score=urgency_score,
-        urgency_level=urgency_level.value,
-        reasoning_trace=reasoning_trace,
-        recommended_action=recommended_action,
-        estimated_wait_minutes=estimated_wait,
-    )
-
-    # Enqueue
-    await queue_service.enqueue_patient(
-        clinic_id=req.clinic_id,
         patient_id=req.patient_id,
-        urgency_score=urgency_score,
-        urgency_level=urgency_level,
-        chief_complaint=session.get("chief_complaint"),
+        clinic_id=req.clinic_id,
+        score_data=score_data,
     )
-
-    # Broadcast
-    queue = await queue_service.get_queue(req.clinic_id)
-    await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
 
     return TriageScoreResponse(
         session_id=req.session_id,
         patient_id=req.patient_id,
-        urgency_score=urgency_score,
-        urgency_level=urgency_level,
-        reasoning_trace=reasoning_trace,
-        recommended_action=recommended_action,
-        estimated_wait_minutes=estimated_wait,
+        urgency_score=int(score_data.get("urgency_score", 50)),
+        urgency_level=UrgencyLevel(score_data.get("urgency_level", "MODERATE")),
+        reasoning_trace=score_data.get("reasoning_trace", []),
+        recommended_action=score_data.get("recommended_action"),
+        estimated_wait_minutes=score_data.get("estimated_wait_minutes"),
     )

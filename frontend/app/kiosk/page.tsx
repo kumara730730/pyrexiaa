@@ -18,7 +18,7 @@ export default function KioskPage() {
   const handleRegistration = useCallback(
     async (data: RegistrationData) => {
       setRegistration(data);
-      await startSession(data.name, data.language);
+      await startSession(data.name, data.language, data.symptoms);
       setStage("chat");
     },
     [startSession]

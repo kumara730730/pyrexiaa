@@ -16,11 +16,13 @@ export default function RegistrationForm({ onComplete }: Props) {
   const [age, setAge] = useState("");
   const [gender, setGender] = useState<"Male" | "Female" | "Other">("Male");
   const [language, setLanguage] = useState<Language>("en");
+  const [symptoms, setSymptoms] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   function validate(): boolean {
     const e: Record<string, string> = {};
     if (!name.trim()) e.name = t("validation_name");
+    if (!symptoms.trim()) e.symptoms = "Please describe your symptoms";
     const ageNum = parseInt(age);
     if (!age || isNaN(ageNum) || ageNum < 0 || ageNum > 150)
       e.age = t("validation_age");
@@ -31,7 +33,7 @@ export default function RegistrationForm({ onComplete }: Props) {
   function handleSubmit(ev: React.FormEvent) {
     ev.preventDefault();
     if (!validate()) return;
-    onComplete({ name: name.trim(), age: parseInt(age), gender, language });
+    onComplete({ name: name.trim(), age: parseInt(age), gender, language, symptoms: symptoms.trim() });
   }
 
   return (
@@ -140,6 +142,28 @@ export default function RegistrationForm({ onComplete }: Props) {
               {t("language_label")}
             </label>
             <LanguagePicker value={language} onChange={setLanguage} />
+          </div>
+
+          {/* Symptoms */}
+          <div>
+            <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
+              What's bringing you in today?
+            </label>
+            <textarea
+              value={symptoms}
+              onChange={(e) => setSymptoms(e.target.value)}
+              placeholder="e.g. I have a sharp pain in my chest..."
+              className="w-full px-5 py-4 rounded-xl text-lg border outline-none transition-all focus:ring-2"
+              rows={3}
+              style={{
+                background: "#161b22",
+                borderColor: errors.symptoms ? "#f85149" : "#21262d",
+                color: "#f0f6fc",
+              }}
+            />
+            {errors.symptoms && (
+              <p className="text-sm mt-1" style={{ color: "#f85149" }}>{errors.symptoms}</p>
+            )}
           </div>
 
           {/* Submit */}
