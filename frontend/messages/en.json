@@ -1,7 +1,7 @@
 {
   "kiosk": {
     "welcome": "Welcome to Pyrexia",
-    "subtitle": "AI-Powered Smart Check-In",
+    "subtitle": "Patient Check-In",
     "name_label": "Your Full Name",
     "name_placeholder": "Enter your full name",
     "age_label": "Age",
@@ -12,10 +12,10 @@
     "gender_other": "Other",
     "language_label": "Preferred Language",
     "begin_btn": "Begin Check-In",
-    "chat_placeholder": "Describe your symptoms...",
+    "chat_placeholder": "Tell us how you're feeling...",
     "send_btn": "Send",
     "voice_btn": "Tap to speak",
-    "scoring": "Analysing your symptoms…",
+    "scoring": "Processing your information…",
     "assigned_to": "You have been assigned to",
     "wait_time": "Estimated wait",
     "seat_message": "Please take a seat. A staff member will call your name shortly.",
@@ -28,13 +28,13 @@
     "score": "Score",
     "wait_updates": "Wait time updates automatically every 30 seconds.",
     "new_checkin": "Start New Check-In",
-    "triage_header": "Pyrexia Triage",
+    "triage_header": "Health Assessment",
     "active": "Active",
     "immediate_attention": "I've flagged this as requiring immediate attention.",
     "emergency_title": "Emergency Team Notified",
     "emergency_message": "Please stay seated — a medical team is on the way.",
     "validation_name": "Please enter your name",
     "validation_age": "Please enter a valid age",
-    "footer_privacy": "Your information is encrypted and processed securely."
+    "footer_privacy": "Your information is kept private and secure."
   }
 }

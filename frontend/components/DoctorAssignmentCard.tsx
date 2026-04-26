@@ -44,12 +44,12 @@ export default function DoctorAssignmentCard({
   };
   
   const specialtyColors: Record<string, string> = {
-    "General Practitioner": "border-accent-blue",
+    "General Practitioner": "border-[#0F766E]",
     "Cardiologist": "border-urgency-critical",
-    "Neurologist": "border-accent-purple",
+    "Neurologist": "border-[#0F766E]",
     "Orthopedist": "border-urgency-moderate",
     // fallback
-    "default": "border-accent-blue"
+    "default": "border-[#0F766E]"
   };
 
   const photoBorderClass = specialtyColors[specialty] || specialtyColors["default"];
@@ -62,12 +62,12 @@ export default function DoctorAssignmentCard({
       
       {/* 1. Header */}
       <div className="mb-8 flex flex-col items-center gap-3">
-        <div className="text-xl font-bold tracking-widest text-accent-blue">PriorIQ</div>
+        <div className="text-xl font-bold tracking-widest text-[#0F766E]">PriorIQ</div>
         <div className="flex items-center gap-2 rounded-full bg-urgency-low/10 px-4 py-2 border border-urgency-low/20">
           <svg className="h-5 w-5 text-urgency-low" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span className="text-urgency-low font-medium">Check-In Complete ✓</span>
+          <span className="text-urgency-low font-medium">Check-In Complete</span>
         </div>
       </div>
 
@@ -84,8 +84,8 @@ export default function DoctorAssignmentCard({
 
       {/* 3. Doctor Card Section */}
       <div className="w-full max-w-md rounded-3xl border border-kiosk-border bg-kiosk-surface/80 p-8 shadow-2xl backdrop-blur-sm flex flex-col items-center relative overflow-hidden">
-        {/* Soft blue glow background inside card */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-32 bg-accent-blue/5 blur-3xl rounded-t-3xl pointer-events-none" />
+        {/* Soft teal glow background inside card */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-32 bg-[#0F766E]/10 blur-3xl rounded-t-3xl pointer-events-none" />
 
         <div className="mb-4 relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -100,7 +100,7 @@ export default function DoctorAssignmentCard({
         <h2 className="text-2xl font-bold text-text-primary mb-2">{doctorName}</h2>
         
         <div className="flex items-center gap-2 mb-6">
-          <span className="rounded-md bg-accent-blue/10 px-2.5 py-1 text-xs font-medium text-accent-blue border border-accent-blue/20">
+          <span className="rounded-md bg-[#0F766E]/10 px-2.5 py-1 text-xs font-medium text-[#0F766E] border border-[#0F766E]/20">
             {specialty}
           </span>
           <span className="rounded-md bg-kiosk-elevated px-2.5 py-1 text-xs font-medium text-text-secondary border border-kiosk-border">
@@ -114,12 +114,12 @@ export default function DoctorAssignmentCard({
             <>
               {queuePosition === 1 ? (
                 <div className="flex flex-col items-center gap-2">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent-blue/20 text-accent-blue mb-1">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#0F766E]/20 text-[#0F766E] mb-1">
                     <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                   </div>
-                  <p className="text-accent-blue font-semibold text-lg">You are next &mdash; the doctor will see you shortly</p>
+                  <p className="text-[#0F766E] font-semibold text-lg">You are next &mdash; the doctor will see you shortly</p>
                   <p className="text-text-secondary text-sm mt-1 h-5"><span className="inline-block w-4 text-left">{dots}</span></p>
                 </div>
               ) : (

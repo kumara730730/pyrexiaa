@@ -12,7 +12,7 @@ import EmergencyAlert from "./components/EmergencyAlert";
 export default function KioskPage() {
   const [stage, setStage] = useState<Stage>("registration");
   const [registration, setRegistration] = useState<RegistrationData | null>(null);
-  const { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef } = useTriageChat();
+  const { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef, patientIdRef, clinicIdRef } = useTriageChat();
 
   // Stage 1 → 2
   const handleRegistration = useCallback(
@@ -79,6 +79,8 @@ export default function KioskPage() {
           result={triageResult}
           sessionId={sessionIdRef.current || "demo-session"}
           patientName={registration.name}
+          patientId={patientIdRef.current}
+          clinicId={clinicIdRef.current}
         />
       )}
     </main>

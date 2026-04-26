@@ -233,7 +233,7 @@ export default function DashboardPage() {
       {/* ── Header ── */}
       <header style={styles.header}>
         <div>
-          <h1 style={styles.title}>Pyrexia Dashboard</h1>
+          <h1 style={styles.title}>PriorIQ</h1>
           <p style={styles.subtitle}>
             Live queue &middot; {entries.length} patient
             {entries.length !== 1 ? "s" : ""}
@@ -469,7 +469,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: "100vh",
     background: "#080c12",
     color: "#e6edf3",
-    fontFamily: "'Inter', system-ui, sans-serif",
+    fontFamily: "inherit",
     position: "relative",
   },
 

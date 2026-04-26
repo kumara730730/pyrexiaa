@@ -12,12 +12,15 @@ AND earlier arrival both sort to the top when retrieved with ZREVRANGE.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Optional
 from uuid import UUID
 
 import redis.asyncio as redis
+
+logger = logging.getLogger("queue_service")
 
 from models.queue import QueueEntry, QueueResponse
 from models.triage import UrgencyLevel
@@ -60,23 +63,26 @@ async def enqueue_patient(
     voice_distress_score: float = 0.0,
 ) -> None:
     """Add or update a patient in the clinic queue."""
-    r = await get_redis()
-    key = _queue_key(clinic_id)
-    member_data = json.dumps(
-        {
-            "patient_id": str(patient_id),
-            "clinic_id": clinic_id,
-            "urgency_score": urgency_score,
-            "urgency_level": urgency_level.value,
-            "chief_complaint": chief_complaint,
-            "voice_distress_score": voice_distress_score,
-            "enqueued_at": time.time(),
-        }
-    )
-    # Remove old entry for same patient (if re-scored)
-    await _remove_patient_entry(r, key, patient_id)
-    score = _compute_score(urgency_score)
-    await r.zadd(key, {member_data: score})
+    try:
+        r = await get_redis()
+        key = _queue_key(clinic_id)
+        member_data = json.dumps(
+            {
+                "patient_id": str(patient_id),
+                "clinic_id": clinic_id,
+                "urgency_score": urgency_score,
+                "urgency_level": urgency_level.value,
+                "chief_complaint": chief_complaint,
+                "voice_distress_score": voice_distress_score,
+                "enqueued_at": time.time(),
+            }
+        )
+        # Remove old entry for same patient (if re-scored)
+        await _remove_patient_entry(r, key, patient_id)
+        score = _compute_score(urgency_score)
+        await r.zadd(key, {member_data: score})
+    except Exception as exc:
+        logger.warning("enqueue_patient failed (Redis offline?): %s", exc)
 
 
 async def _remove_patient_entry(
@@ -94,38 +100,42 @@ async def _remove_patient_entry(
 
 async def get_queue(clinic_id: str) -> QueueResponse:
     """Return the full ordered queue for a clinic."""
-    r = await get_redis()
-    key = _queue_key(clinic_id)
-    members = await r.zrevrange(key, 0, -1, withscores=False)
+    try:
+        r = await get_redis()
+        key = _queue_key(clinic_id)
+        members = await r.zrevrange(key, 0, -1, withscores=False)
 
-    from datetime import datetime, timezone
-    from services.claude_service import rerank_queue
+        from datetime import datetime, timezone
+        from services.claude_service import rerank_queue
 
-    parsed_items = []
-    for raw in members:
-        parsed_items.append(json.loads(raw))
+        parsed_items = []
+        for raw in members:
+            parsed_items.append(json.loads(raw))
 
-    # Re-rank queue using Haiku
-    reordered_items = await rerank_queue(parsed_items)
+        # Re-rank queue using Haiku
+        reordered_items = await rerank_queue(parsed_items)
 
-    entries: list[QueueEntry] = []
-    for idx, data in enumerate(reordered_items, start=1):
-        entries.append(
-            QueueEntry(
-                patient_id=data["patient_id"],
-                clinic_id=data["clinic_id"],
-                urgency_score=data["urgency_score"],
-                urgency_level=UrgencyLevel(data["urgency_level"]),
-                chief_complaint=data.get("chief_complaint"),
-                voice_distress_score=data.get("voice_distress_score", 0.0),
-                position=idx,
-                enqueued_at=datetime.fromtimestamp(
-                    data["enqueued_at"], tz=timezone.utc
-                ),
+        entries: list[QueueEntry] = []
+        for idx, data in enumerate(reordered_items, start=1):
+            entries.append(
+                QueueEntry(
+                    patient_id=data["patient_id"],
+                    clinic_id=data["clinic_id"],
+                    urgency_score=data["urgency_score"],
+                    urgency_level=UrgencyLevel(data["urgency_level"]),
+                    chief_complaint=data.get("chief_complaint"),
+                    voice_distress_score=data.get("voice_distress_score", 0.0),
+                    position=idx,
+                    enqueued_at=datetime.fromtimestamp(
+                        data["enqueued_at"], tz=timezone.utc
+                    ),
+                )
             )
-        )
 
-    return QueueResponse(clinic_id=clinic_id, entries=entries, total=len(entries))
+        return QueueResponse(clinic_id=clinic_id, entries=entries, total=len(entries))
+    except Exception as exc:
+        logger.warning("get_queue failed (Redis offline?): %s", exc)
+        return QueueResponse(clinic_id=clinic_id, entries=[], total=0)
 
 
 async def reorder_patient(
@@ -182,21 +192,25 @@ async def emergency_override(
 
     Returns the previous score or ``None`` if new to queue.
     """
-    r = await get_redis()
-    key = _queue_key(clinic_id)
-    old_score = await _remove_patient_entry(r, key, patient_id)
+    try:
+        r = await get_redis()
+        key = _queue_key(clinic_id)
+        old_score = await _remove_patient_entry(r, key, patient_id)
 
-    member_data = json.dumps(
-        {
-            "patient_id": str(patient_id),
-            "clinic_id": clinic_id,
-            "urgency_score": 100,
-            "urgency_level": UrgencyLevel.CRITICAL.value,
-            "chief_complaint": chief_complaint,
-            "voice_distress_score": 10.0,  # Emergency is max distress
-            "enqueued_at": time.time(),
-        }
-    )
-    # Use a very high score to guarantee position 1
-    await r.zadd(key, {member_data: _compute_score(100)})
-    return old_score
+        member_data = json.dumps(
+            {
+                "patient_id": str(patient_id),
+                "clinic_id": clinic_id,
+                "urgency_score": 100,
+                "urgency_level": UrgencyLevel.CRITICAL.value,
+                "chief_complaint": chief_complaint,
+                "voice_distress_score": 10.0,  # Emergency is max distress
+                "enqueued_at": time.time(),
+            }
+        )
+        # Use a very high score to guarantee position 1
+        await r.zadd(key, {member_data: _compute_score(100)})
+        return old_score
+    except Exception as exc:
+        logger.warning("emergency_override failed (Redis offline?): %s", exc)
+        return None

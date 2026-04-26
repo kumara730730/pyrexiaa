@@ -39,6 +39,9 @@ export interface DoctorAssignment {
   doctor_photo: string;
   specialty: string;
   room_number: string;
+  floor_number: string;
+  department: string;
+  availability_status: string;
   estimated_wait_minutes: number;
   queue_position: number;
 }

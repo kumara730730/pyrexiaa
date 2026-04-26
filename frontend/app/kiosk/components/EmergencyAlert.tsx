@@ -69,7 +69,7 @@ export default function EmergencyAlert({ patientName }: Props) {
           className="text-4xl font-bold mb-4 tracking-tight"
           style={{
             color: "#f85149",
-            fontFamily: "Inter, sans-serif",
+            fontFamily: "inherit",
             textShadow: "0 0 30px rgba(248, 81, 73, 0.3)",
           }}
         >
@@ -79,7 +79,7 @@ export default function EmergencyAlert({ patientName }: Props) {
         {/* Patient name */}
         <p
           className="text-xl mb-6"
-          style={{ color: "#f0f6fc", fontFamily: "Inter, sans-serif" }}
+          style={{ color: "var(--color-text-primary)", fontFamily: "inherit" }}
         >
           {patientName}
         </p>
@@ -94,7 +94,7 @@ export default function EmergencyAlert({ patientName }: Props) {
         >
           <p
             className="text-lg leading-relaxed"
-            style={{ color: "#f0f6fc", fontFamily: "Inter, sans-serif" }}
+            style={{ color: "var(--color-text-primary)", fontFamily: "inherit" }}
           >
             {t("emergency_message")}
           </p>

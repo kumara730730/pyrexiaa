@@ -45,42 +45,54 @@ async def start_triage(req: TriageStartRequest):
     2. If critical → short-circuit, enqueue immediately, broadcast.
     3. Otherwise → create session, ask the first follow-up question via Claude.
     """
+    from uuid import uuid4 as _uuid4
+
     # ── Hard-rule gate ────────────────────────────────────────────────────
     hr = check_hard_rules(req.chief_complaint)
 
-    # Create DB session regardless
-    session = await supabase_service.create_triage_session(
-        patient_id=req.patient_id,
-        clinic_id=req.clinic_id,
-        chief_complaint=req.chief_complaint,
-        language=req.language or "en",
-    )
-    session_id = UUID(session["id"])
+    # Create DB session (graceful — returns in-memory dict if Supabase is down)
+    try:
+        session = await supabase_service.create_triage_session(
+            patient_id=req.patient_id,
+            clinic_id=req.clinic_id,
+            chief_complaint=req.chief_complaint,
+            language=req.language or "en",
+        )
+        session_id = UUID(session["id"])
+    except Exception as exc:
+        logger.error("Failed to create triage session in DB: %s", exc)
+        session_id = UUID(str(_uuid4()))
 
     if hr.triggered:
-        # Persist score
-        await supabase_service.save_triage_score(
-            session_id=session_id,
-            urgency_score=hr.urgency_score,
-            urgency_level=hr.urgency_level,
-            reasoning_trace=hr.reasoning_trace,
-            recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
-        )
-        # Emergency override — force position 0 in Redis queue
-        await queue_service.emergency_override(
-            clinic_id=req.clinic_id,
-            patient_id=req.patient_id,
-            chief_complaint=req.chief_complaint,
-        )
-        # Broadcast queue update + emergency alarm to all doctor screens
-        queue = await queue_service.get_queue(req.clinic_id)
-        await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
-        await broadcast_emergency(
-            clinic_id=req.clinic_id,
-            patient_id=str(req.patient_id),
-            chief_complaint=req.chief_complaint,
-            matched_keywords=hr.matched_keywords,
-        )
+        # Persist score (non-fatal)
+        try:
+            await supabase_service.save_triage_score(
+                session_id=session_id,
+                urgency_score=hr.urgency_score,
+                urgency_level=hr.urgency_level,
+                reasoning_trace=hr.reasoning_trace,
+                recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
+            )
+        except Exception:
+            logger.exception("Score persistence failed for session %s", session_id)
+
+        # Emergency override — force position 0 in Redis queue (non-fatal)
+        try:
+            await queue_service.emergency_override(
+                clinic_id=req.clinic_id,
+                patient_id=req.patient_id,
+                chief_complaint=req.chief_complaint,
+            )
+            queue = await queue_service.get_queue(req.clinic_id)
+            await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
+            await broadcast_emergency(
+                clinic_id=req.clinic_id,
+                patient_id=str(req.patient_id),
+                chief_complaint=req.chief_complaint,
+                matched_keywords=hr.matched_keywords,
+            )
+        except Exception:
+            logger.exception("Queue/broadcast failed for session %s", session_id)
 
         return TriageStartResponse(
             session_id=session_id,
@@ -95,17 +107,31 @@ async def start_triage(req: TriageStartRequest):
         {"role": "user", "content": f"Chief complaint: {req.chief_complaint}"}
     ]
 
-    first_question = await claude_service.get_triage_response(
-        conversation_history, language=req.language or "en"
-    )
+    try:
+        first_question = await claude_service.get_triage_response(
+            conversation_history, language=req.language or "en"
+        )
+    except Exception as exc:
+        logger.error("AI call failed for initial question: %s", exc)
+        first_question = (
+            "Hello! I'm Pyrexia, your medical triage assistant. "
+            "Could you tell me more about your symptoms — when did they start, "
+            "and how severe are they on a scale of 1 to 10?"
+        )
 
-    # Persist in Supabase
-    await supabase_service.append_message(session_id, "user", req.chief_complaint)
-    await supabase_service.append_message(session_id, "assistant", first_question)
+    # Persist in Supabase (non-fatal)
+    try:
+        await supabase_service.append_message(session_id, "user", req.chief_complaint)
+        await supabase_service.append_message(session_id, "assistant", first_question)
+    except Exception:
+        logger.warning("Failed to persist messages for session %s", session_id)
 
-    # Seed Redis history for subsequent /triage/message calls
-    await claude_service._append_to_history(str(session_id), "user", f"Chief complaint: {req.chief_complaint}")
-    await claude_service._append_to_history(str(session_id), "assistant", first_question)
+    # Seed Redis history for subsequent /triage/message calls (non-fatal)
+    try:
+        await claude_service._append_to_history(str(session_id), "user", f"Chief complaint: {req.chief_complaint}")
+        await claude_service._append_to_history(str(session_id), "assistant", first_question)
+    except Exception:
+        logger.warning("Failed to seed Redis history for session %s", session_id)
 
     return TriageStartResponse(
         session_id=session_id,
@@ -132,28 +158,33 @@ async def triage_message(req: TriageMessageRequest):
     # ── Hard-rule gate on the new message ─────────────────────────────────
     hr = check_hard_rules(req.message)
     if hr.triggered:
-        await supabase_service.save_triage_score(
-            session_id=req.session_id,
-            urgency_score=hr.urgency_score,
-            urgency_level=hr.urgency_level,
-            reasoning_trace=hr.reasoning_trace,
-            recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
-        )
-        # Emergency override — force position 0 in Redis queue
-        await queue_service.emergency_override(
-            clinic_id=req.clinic_id,
-            patient_id=req.patient_id,
-            chief_complaint=req.message,
-        )
-        # Broadcast queue update + emergency alarm to all doctor screens
-        queue = await queue_service.get_queue(req.clinic_id)
-        await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
-        await broadcast_emergency(
-            clinic_id=req.clinic_id,
-            patient_id=str(req.patient_id),
-            chief_complaint=req.message,
-            matched_keywords=hr.matched_keywords,
-        )
+        try:
+            await supabase_service.save_triage_score(
+                session_id=req.session_id,
+                urgency_score=hr.urgency_score,
+                urgency_level=hr.urgency_level,
+                reasoning_trace=hr.reasoning_trace,
+                recommended_action="IMMEDIATE EMERGENCY ATTENTION REQUIRED",
+            )
+        except Exception:
+            logger.exception("Score persistence failed in message handler")
+
+        try:
+            await queue_service.emergency_override(
+                clinic_id=req.clinic_id,
+                patient_id=req.patient_id,
+                chief_complaint=req.message,
+            )
+            queue = await queue_service.get_queue(req.clinic_id)
+            await broadcast_queue_update(req.clinic_id, queue.model_dump(mode="json"))
+            await broadcast_emergency(
+                clinic_id=req.clinic_id,
+                patient_id=str(req.patient_id),
+                chief_complaint=req.message,
+                matched_keywords=hr.matched_keywords,
+            )
+        except Exception:
+            logger.exception("Queue/broadcast failed in message handler")
 
         return {
             "hard_rule_triggered": True,
@@ -196,11 +227,6 @@ async def triage_message(req: TriageMessageRequest):
                 ),
                 agent_id=active_agent,
                 append_history=not transfer_occurred,
-            )
-
-                ),
-                agent_id=active_agent,
-                append_history=not transfer_occurred if 'transfer_occurred' in locals() else True,
             )
 
 

@@ -100,3 +100,63 @@ async def emergency_override(req: EmergencyOverrideRequest):
         position=1,
         reason=req.reason,
     )
+
+
+# ── GET /queue/assignment/{patient_id} ───────────────────────────────────────
+
+
+@router.get("/assignment/{patient_id}")
+async def get_patient_assignment(patient_id: UUID, clinic_id: str):
+    """
+    Retrieve a patient's queue assignment — position, estimated wait, and
+    assigned doctor info.
+
+    This is a convenience endpoint used by the kiosk DoctorCard component.
+    """
+    queue = await queue_service.get_queue(clinic_id)
+
+    # Find the patient in the queue
+    entry = None
+    for e in queue.entries:
+        if str(e.patient_id) == str(patient_id):
+            entry = e
+            break
+
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Patient not found in queue")
+
+    # Map urgency level / specialty to a demo doctor assignment
+    # In production this would come from a doctor scheduling service
+    DOCTOR_MAP = {
+        "CRITICAL": {
+            "doctor_name": "Dr. Priya Nair",
+            "specialty": "Emergency Medicine",
+            "room_number": "ER-01",
+        },
+        "HIGH": {
+            "doctor_name": "Dr. Rajesh Menon",
+            "specialty": "Cardiology",
+            "room_number": "C-04",
+        },
+        "MODERATE": {
+            "doctor_name": "Dr. Ananya Sharma",
+            "specialty": "General Practice",
+            "room_number": "G-12",
+        },
+        "LOW": {
+            "doctor_name": "Dr. Ananya Sharma",
+            "specialty": "General Practice",
+            "room_number": "G-12",
+        },
+    }
+
+    doc = DOCTOR_MAP.get(entry.urgency_level.value, DOCTOR_MAP["MODERATE"])
+
+    return {
+        "doctor_name": doc["doctor_name"],
+        "doctor_photo": "",
+        "specialty": doc["specialty"],
+        "room_number": doc["room_number"],
+        "estimated_wait_minutes": entry.position * 5,
+        "queue_position": entry.position,
+    }

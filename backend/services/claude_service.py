@@ -36,7 +36,9 @@ async def _get_redis() -> aioredis.Redis:
 # ── Configuration ────────────────────────────────────────────────────────────
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_SCORING_API_KEY = os.environ.get("GEMINI_SCORING_API_KEY", "") or GEMINI_API_KEY
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+SCORING_MODEL = os.environ.get("GEMINI_SCORING_MODEL", "") or MODEL
 
 # Google Gemini OpenAI-compatible endpoint
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -55,35 +57,47 @@ def _history_key(session_id: str) -> str:
 # ── System prompts ───────────────────────────────────────────────────────────
 
 TRIAGE_SYSTEM_PROMPT = """\
-You are Pyrexia, a senior clinical triage specialist operating through a multilingual AI medical kiosk.
+You are Pyrexia, a quick check-in assistant at a medical clinic kiosk. Your ONLY job is to collect just enough information to determine how urgently this patient needs to be seen.
 
 Language: Respond ONLY in {language}.
 Voice Distress Score: {voice_distress_score}/100.
 
-Your Absolute Mandate:
-1. Conduct a deep, systematic clinical assessment. Ask focused follow-up questions ONE AT A TIME.
-2. Gather detailed data on: onset, character of pain, severity (1-10), radiation, associated systemic symptoms, and medical history.
-3. Provide rigorous clinical reasoning. 
+YOU ARE NOT A DOCTOR. Do NOT ask diagnostic questions like "what makes it worse", "does it radiate", "describe the character of pain", or "what is your medical history". Those are the doctor's job. You are a receptionist sorting a queue.
 
-When you have sufficient data (3-5 exchanges) to classify the patient, you MUST respond with a valid JSON object and NOTHING ELSE. 
+RULES:
+1. Ask exactly ONE short question per response. Keep it under 1 sentence.
+2. You only need 2-3 quick data points after the chief complaint:
+   - How bad is it right now? (severity 1-10)
+   - How long has this been going on?
+   - Any allergies or medications we should know about?
+3. After collecting 2-3 answers, IMMEDIATELY output the scoring JSON. Do not keep asking.
+4. Be friendly and brief. Think "clinic receptionist", not "medical examiner".
 
-Your JSON MUST follow this exact schema:
+EXAMPLES OF WHAT TO ASK:
+- "On a scale of 1 to 10, how bad is the pain right now?"
+- "When did this start?"
+- "Are you currently taking any medications or have any allergies?"
+
+EXAMPLES OF WHAT NOT TO ASK (doctor's job):
+- "Does the pain radiate anywhere?"
+- "What were you doing when it started?"
+- "Do you have a family history of...?"
+- "Have you experienced this before?"
+
+After 2-3 exchanges, respond with ONLY this JSON:
 {{
   "urgency_score": <int 0-100>,
   "urgency_level": "<CRITICAL|HIGH|MODERATE|LOW|NON_URGENT>",
-  "reasoning_trace": ["<differential diagnosis logic step 1>", "<step 2>"],
+  "reasoning_trace": ["<reason 1>", "<reason 2>"],
   "recommended_action": "<action>",
   "estimated_wait_minutes": <int>,
   "red_flags": ["<flag 1>"],
-  "chief_complaint_refined": "<refined line>"
+  "chief_complaint_refined": "<one line summary>",
+  "recommended_doctor_specialty": "<General Practice|Cardiology|Neurology|Orthopaedics|Dermatology|ENT|Gastroenterology|Pulmonology|Psychiatry|Emergency>"
 }}
 
-Scoring guidance:
-  90-100 CRITICAL (Life-threatening)
-  70-89  HIGH (Needs rapid assessment)
-  40-69  MODERATE (Semi-urgent)
-  20-39  LOW
-  0-19   NON_URGENT"""
+Scoring:
+  90-100 CRITICAL — 70-89 HIGH — 40-69 MODERATE — 20-39 LOW — 0-19 NON_URGENT"""
 
 BRIEF_SYSTEM_PROMPT = """\
 You are a clinical documentation AI for Pyrexia. Generate a concise, actionable pre-visit brief for the attending doctor.
@@ -117,12 +131,35 @@ Patient queue:
 Return ONLY this JSON, no explanation:
 {{"ordered_ids": ["id1", "id2", "id3"]}}"""
 
-# ── Shared HTTP helper ───────────────────────────────────────────────────────
+DIAGNOSTIC_SYSTEM_PROMPT = """\
+You are a Pyrexia Diagnostic Specialist.
+Language: Respond ONLY in {language}.
+Voice Distress Score: {voice_distress_score}/100.
+
+Your task is to ask deep follow-up questions regarding the specific symptoms mentioned to identify potential underlying conditions.
+Do not output JSON, just ask the patient one clear, empathetic question at a time. Do not make a final diagnosis yet."""
+
+VERIFICATION_SYSTEM_PROMPT = TRIAGE_SYSTEM_PROMPT
+
+AGENT_REGISTRY = {
+    "triage_orchestrator": TRIAGE_SYSTEM_PROMPT,
+    "diagnostic_specialist": DIAGNOSTIC_SYSTEM_PROMPT,
+    "verification_agent": VERIFICATION_SYSTEM_PROMPT,
+}
+
+# ── Shared HTTP helpers ──────────────────────────────────────────────────────
 def _get_headers() -> dict:
-    """Build auth headers for the Gemini OpenAI-compatible endpoint."""
+    """Build auth headers for the Gemini endpoint — used for CHAT."""
     return {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {GEMINI_API_KEY}",
+    }
+
+def _get_scoring_headers() -> dict:
+    """Build auth headers for the Gemini endpoint — used for SCORING/ANALYSIS."""
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {GEMINI_SCORING_API_KEY}",
     }
 
 # ── Redis conversation-history helpers ────────────────────────────────────────
@@ -185,6 +222,9 @@ async def stream_triage_message(
     
     full_response_text = []
     
+    is_json_response = None
+    buffer = ""
+    
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream(
@@ -196,7 +236,7 @@ async def stream_triage_message(
                     "messages": messages,
                     "stream": True,
                     "temperature": 0.1,
-                    "max_tokens": 500,
+                    "max_tokens": 200,
                 }
             ) as response:
                 if response.status_code != 200:
@@ -221,7 +261,21 @@ async def stream_triage_message(
                                 token = delta.get("content", "")
                                 if token:
                                     full_response_text.append(token)
-                                    yield token
+                                    if is_json_response is None:
+                                        buffer += token
+                                        stripped_buffer = buffer.lstrip()
+                                        if not stripped_buffer:
+                                            continue  # Still whitespace, wait for more tokens
+                                        if stripped_buffer.startswith("{") or stripped_buffer.startswith("```"):
+                                            is_json_response = True
+                                        else:
+                                            is_json_response = False
+                                            yield buffer
+                                            buffer = ""
+                                    elif is_json_response:
+                                        pass  # We suspect this is JSON, do not yield tokens to the chat UI
+                                    else:
+                                        yield token
                         except json.JSONDecodeError:
                             logger.warning(f"Skipping malformed SSE line: {raw_data[:100]}")
                             continue
@@ -231,7 +285,7 @@ async def stream_triage_message(
         yield "The request timed out. Please try again."
         return
     except Exception as exc:
-        logger.error(f"Gemini streaming failed: {exc}")
+        logger.error(f"Gemini streaming failed: {exc}", exc_info=True)
         yield "I'm having trouble connecting. Please try again."
         return
 
@@ -240,9 +294,10 @@ async def stream_triage_message(
 
     # Check if the response is JSON (Scoring)
     stripped = full_response.strip()
-    # Handle markdown-wrapped JSON (```json ... ```)
-    if stripped.startswith("```"):
-        # Extract content between code fences
+    is_valid_score = False
+
+    # Try to extract JSON between markdown fences
+    if "```" in stripped:
         lines = stripped.split("\n")
         json_lines = []
         in_block = False
@@ -254,15 +309,28 @@ async def stream_triage_message(
                 break
             elif in_block:
                 json_lines.append(l)
-        stripped = "\n".join(json_lines).strip()
+        if json_lines:
+            stripped = "\n".join(json_lines).strip()
+
+    # robust extraction if normal check fails but contains JSON
+    if not stripped.startswith("{") and "urgency_score" in stripped:
+        start_idx = stripped.find("{")
+        end_idx = stripped.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            stripped = stripped[start_idx:end_idx+1]
 
     if stripped.startswith("{") and "urgency_score" in stripped:
         try:
             # Basic validation
             score_data = json.loads(stripped)
             yield f"__SCORE_JSON__:{json.dumps(score_data)}"
+            is_valid_score = True
         except json.JSONDecodeError:
             pass
+
+    # If we suppressed tokens but it turned out NOT to be a valid score, yield it now as fallback
+    if is_json_response and not is_valid_score:
+        yield full_response
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 2.  get_triage_response  — Simple wrapper for initial greeting/questions
@@ -304,7 +372,7 @@ async def get_triage_response(
             result = response.json()
             return result["choices"][0]["message"]["content"].strip()
     except Exception as exc:
-        logger.error(f"Gemini call failed: {exc}")
+        logger.error(f"Gemini call failed: {exc}", exc_info=True)
         return "Hello! I'm Pyrexia, your medical triage assistant. Could you tell me more about your symptoms?"
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -332,9 +400,9 @@ async def generate_brief(
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{BASE_URL}/chat/completions",
-                headers=_get_headers(),
+                headers=_get_scoring_headers(),
                 json={
-                    "model": MODEL,
+                    "model": SCORING_MODEL,
                     "messages": [
                         {"role": "system", "content": BRIEF_SYSTEM_PROMPT},
                         {"role": "user", "content": user_content}
@@ -424,9 +492,9 @@ async def rerank_queue(queue_items: list[dict]) -> list[dict]:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{BASE_URL}/chat/completions",
-                headers=_get_headers(),
+                headers=_get_scoring_headers(),
                 json={
-                    "model": MODEL,
+                    "model": SCORING_MODEL,
                     "messages": [
                         {
                             "role": "user",
@@ -488,9 +556,9 @@ async def score_triage(conversation_history: list[dict]) -> dict:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{BASE_URL}/chat/completions",
-                headers=_get_headers(),
+                headers=_get_scoring_headers(),
                 json={
-                    "model": MODEL,
+                    "model": SCORING_MODEL,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content}

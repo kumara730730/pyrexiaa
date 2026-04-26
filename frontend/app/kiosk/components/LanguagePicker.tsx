@@ -3,11 +3,11 @@
 import type { Language } from "../types";
 
 const LANGUAGES: { code: Language; flag: string; label: string }[] = [
-  { code: "en", flag: "🇬🇧", label: "English" },
-  { code: "hi", flag: "🇮🇳", label: "हिंदी" },
-  { code: "kn", flag: "🇮🇳", label: "ಕನ್ನಡ" },
-  { code: "ta", flag: "🇮🇳", label: "தமிழ்" },
-  { code: "te", flag: "🇮🇳", label: "తెలుగు" },
+  { code: "en", flag: "EN", label: "English" },
+  { code: "hi", flag: "HI", label: "हिंदी" },
+  { code: "kn", flag: "KN", label: "ಕನ್ನಡ" },
+  { code: "ta", flag: "TA", label: "தமிழ்" },
+  { code: "te", flag: "TE", label: "తెలుగు" },
 ];
 
 interface Props {
@@ -41,16 +41,16 @@ export default function LanguagePicker({ value, onChange }: Props) {
             onClick={() => handleSelect(opt.code)}
             className="flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl text-sm font-medium transition-all border cursor-pointer"
             style={{
-              background: isActive ? "rgba(88,166,255,0.15)" : "#161b22",
-              borderColor: isActive ? "#58a6ff" : "#21262d",
-              color: isActive ? "#58a6ff" : "#8b949e",
+              background: isActive ? "rgba(15, 118, 110, 0.1)" : "#161b22",
+              borderColor: isActive ? "var(--color-accent-teal)" : "#21262d",
+              color: isActive ? "var(--color-accent-teal)" : "#8b949e",
               boxShadow: isActive
-                ? "0 0 12px rgba(88,166,255,0.15)"
+                ? "0 0 12px rgba(15, 118, 110, 0.15)"
                 : "none",
               transform: isActive ? "scale(1.03)" : "scale(1)",
             }}
           >
-            <span className="text-lg">{opt.flag}</span>
+            <span className="text-lg font-bold">{opt.flag}</span>
             <span>{opt.label}</span>
           </button>
         );

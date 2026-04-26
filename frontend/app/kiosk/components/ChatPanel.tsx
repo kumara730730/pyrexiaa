@@ -18,17 +18,45 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const userClickedElsewhereRef = useRef(false);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom — preserve input focus after scroll
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
+    // Re-focus input after scroll if user hasn't deliberately clicked elsewhere
+    if (!userClickedElsewhereRef.current) {
+      inputRef.current?.focus();
+    }
   }, [messages]);
+
+  // Re-focus input when streaming ends
+  useEffect(() => {
+    if (!isStreaming) {
+      userClickedElsewhereRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [isStreaming]);
+
+  // Track if user deliberately clicked outside the input (e.g. on mic or send button)
+  // so we don't fight the user's intent
+  useEffect(() => {
+    function handleMouseDown(e: MouseEvent) {
+      if (inputRef.current && !inputRef.current.contains(e.target as Node)) {
+        userClickedElsewhereRef.current = true;
+      } else {
+        userClickedElsewhereRef.current = false;
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, []);
 
   function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
+    userClickedElsewhereRef.current = false;
     onSend(trimmed);
     setInput("");
     inputRef.current?.focus();
@@ -39,6 +67,7 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
     (text: string, distressScore: number) => {
       if (!text.trim() || isStreaming) return;
       setInput(text);
+      userClickedElsewhereRef.current = false;
       // Auto-send with distress score after a brief visual delay
       setTimeout(() => {
         onSend(text.trim(), distressScore);
@@ -55,14 +84,14 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
       <header className="flex items-center gap-3 px-6 py-4 border-b"
         style={{ borderColor: "#21262d", background: "#0d1117" }}>
         <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: "linear-gradient(135deg, #58a6ff, #a78bfa)" }}>
+          style={{ background: "var(--color-accent-teal)" }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white"
             strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
         </div>
         <div>
-          <h2 className="text-base font-semibold" style={{ color: "#f0f6fc" }}>
+          <h2 className="text-base font-semibold" style={{ color: "var(--color-text-primary)" }}>
             {t("triage_header")}
           </h2>
           <div className="flex items-center gap-1.5">
@@ -99,8 +128,9 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
             style={{
               background: "#161b22",
               borderColor: "#21262d",
-              color: "#f0f6fc",
-            }}
+              color: "var(--color-text-primary)",
+              "--tw-ring-color": "var(--color-accent-teal)",
+            } as React.CSSProperties}
             autoFocus
           />
 
@@ -114,9 +144,9 @@ export default function ChatPanel({ messages, isStreaming, onSend, language = "e
           <button
             onClick={handleSend}
             disabled={isStreaming || !input.trim()}
-            className="px-6 py-4 rounded-xl font-semibold transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100 cursor-pointer"
+            className="px-6 py-4 rounded-xl font-semibold transition-all hover:scale-[0.98] active:scale-95 disabled:opacity-40 cursor-pointer"
             style={{
-              background: "linear-gradient(135deg, #58a6ff, #a78bfa)",
+              background: "var(--color-accent-teal)",
               color: "#fff",
             }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -142,8 +172,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         {/* Avatar */}
         {isAgent && (
           <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center mt-1"
-            style={{ background: "linear-gradient(135deg, #58a6ff, #a78bfa)" }}>
-            <span className="text-xs font-bold text-white">P</span>
+            style={{ background: "var(--color-accent-teal)" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
           </div>
         )}
 
@@ -151,9 +184,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <div
           className="px-5 py-3.5 rounded-2xl text-base leading-relaxed"
           style={{
-            background: isAgent ? "#0d1a2e" : "#1a2332",
-            border: isAgent ? "1px solid #1e3a5f" : "1px solid transparent",
-            color: "#f0f6fc",
+            background: isAgent ? "var(--color-agent-bubble)" : "var(--color-patient-bubble)",
+            border: isAgent ? "1px solid var(--color-agent-border)" : "1px solid transparent",
+            color: "var(--color-text-primary)",
             borderRadius: isAgent
               ? "4px 20px 20px 20px"
               : "20px 4px 20px 20px",
@@ -161,7 +194,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           {message.content}
           {message.isStreaming && (
             <span className="inline-block w-1.5 h-5 ml-1 rounded-sm animate-pulse"
-              style={{ background: "#58a6ff", verticalAlign: "text-bottom" }} />
+              style={{ background: "var(--color-accent-teal)", verticalAlign: "text-bottom" }} />
           )}
         </div>
       </div>
@@ -176,14 +209,17 @@ function TypingIndicator() {
     <div className="flex justify-start max-w-3xl mx-auto">
       <div className="flex gap-3">
         <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center"
-          style={{ background: "linear-gradient(135deg, #58a6ff, #a78bfa)" }}>
-          <span className="text-xs font-bold text-white">P</span>
+          style={{ background: "var(--color-accent-teal)" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
         </div>
         <div className="px-5 py-4 rounded-2xl flex gap-1.5 items-center"
-          style={{ background: "#0d1a2e", border: "1px solid #1e3a5f", borderRadius: "4px 20px 20px 20px" }}>
-          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "#58a6ff" }} />
-          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "#58a6ff" }} />
-          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "#58a6ff" }} />
+          style={{ background: "var(--color-agent-bubble)", border: "1px solid var(--color-agent-border)", borderRadius: "4px 20px 20px 20px" }}>
+          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "var(--color-accent-teal)" }} />
+          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "var(--color-accent-teal)" }} />
+          <span className="typing-dot w-2.5 h-2.5 rounded-full" style={{ background: "var(--color-accent-teal)" }} />
         </div>
       </div>
     </div>

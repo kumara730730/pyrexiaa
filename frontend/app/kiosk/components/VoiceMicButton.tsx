@@ -120,7 +120,7 @@ export default function VoiceMicButton({
                     : "#d29922",
               }}
             >
-              ⚡ {distressScore}
+              {distressScore}
             </span>
           )}
         </div>

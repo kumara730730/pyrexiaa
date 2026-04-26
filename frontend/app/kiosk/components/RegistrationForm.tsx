@@ -42,16 +42,16 @@ export default function RegistrationForm({ onComplete }: Props) {
         {/* Logo / Brand */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #58a6ff 0%, #a78bfa 100%)" }}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+              style={{ background: "var(--color-accent-teal)" }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"
                 strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
               </svg>
             </div>
             <h1 className="text-4xl font-bold tracking-tight"
-              style={{ fontFamily: "Inter, sans-serif" }}>
-              Pyre<span style={{ color: "#58a6ff" }}>xia</span>
+              style={{ fontFamily: "inherit" }}>
+              Pyre<span style={{ color: "var(--color-accent-teal)" }}>xia</span>
             </h1>
           </div>
           <p className="text-xl" style={{ color: "#8b949e" }}>
@@ -61,11 +61,11 @@ export default function RegistrationForm({ onComplete }: Props) {
 
         {/* Form Card */}
         <form onSubmit={handleSubmit}
-          className="rounded-3xl p-8 space-y-6 border"
+          className="rounded-xl p-8 space-y-6 border"
           style={{
             background: "#0d1117",
             borderColor: "#21262d",
-            boxShadow: "0 0 80px rgba(88, 166, 255, 0.05)",
+            boxShadow: "0 4px 20px rgba(0, 0, 0, 0.05)",
           }}>
 
           {/* Name */}
@@ -82,8 +82,8 @@ export default function RegistrationForm({ onComplete }: Props) {
               style={{
                 background: "#161b22",
                 borderColor: errors.name ? "#f85149" : "#21262d",
-                color: "#f0f6fc",
-                ...(errors.name ? {} : { "--tw-ring-color": "#58a6ff" } as React.CSSProperties),
+                color: "var(--color-text-primary)",
+                ...(errors.name ? {} : { "--tw-ring-color": "var(--color-accent-teal)" } as React.CSSProperties),
               }}
               autoFocus
             />
@@ -99,17 +99,21 @@ export default function RegistrationForm({ onComplete }: Props) {
                 {t("age_label")}
               </label>
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={age}
-                onChange={(e) => setAge(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, "");
+                  setAge(val);
+                }}
                 placeholder={t("age_placeholder")}
-                min={0}
-                max={150}
                 className="w-full px-5 py-4 rounded-xl text-lg border outline-none transition-all focus:ring-2"
                 style={{
                   background: "#161b22",
                   borderColor: errors.age ? "#f85149" : "#21262d",
-                  color: "#f0f6fc",
+                  color: "var(--color-text-primary)",
+                  ...(errors.age ? {} : { "--tw-ring-color": "var(--color-accent-teal)" } as React.CSSProperties),
                 }}
               />
               {errors.age && (
@@ -120,19 +124,27 @@ export default function RegistrationForm({ onComplete }: Props) {
               <label className="block text-sm font-medium mb-2" style={{ color: "#8b949e" }}>
                 {t("gender_label")}
               </label>
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value as typeof gender)}
-                className="w-full px-5 py-4 rounded-xl text-lg border outline-none appearance-none cursor-pointer"
-                style={{
-                  background: "#161b22",
-                  borderColor: "#21262d",
-                  color: "#f0f6fc",
-                }}>
-                <option value="Male">{t("gender_male")}</option>
-                <option value="Female">{t("gender_female")}</option>
-                <option value="Other">{t("gender_other")}</option>
-              </select>
+              <div className="grid grid-cols-3 gap-2">
+                {(["Male", "Female", "Other"] as const).map((opt) => {
+                  const isActive = gender === opt;
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setGender(opt)}
+                      className="flex items-center justify-center py-4 rounded-xl text-base font-medium transition-all border cursor-pointer"
+                      style={{
+                        background: isActive ? "rgba(15, 118, 110, 0.1)" : "#161b22",
+                        borderColor: isActive ? "var(--color-accent-teal)" : "#21262d",
+                        color: isActive ? "var(--color-accent-teal)" : "#8b949e",
+                        boxShadow: isActive ? "0 0 12px rgba(15, 118, 110, 0.15)" : "none",
+                      }}
+                    >
+                      {opt === "Male" ? t("gender_male") : opt === "Female" ? t("gender_female") : t("gender_other")}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -158,7 +170,8 @@ export default function RegistrationForm({ onComplete }: Props) {
               style={{
                 background: "#161b22",
                 borderColor: errors.symptoms ? "#f85149" : "#21262d",
-                color: "#f0f6fc",
+                color: "var(--color-text-primary)",
+                ...(errors.symptoms ? {} : { "--tw-ring-color": "var(--color-accent-teal)" } as React.CSSProperties),
               }}
             />
             {errors.symptoms && (
@@ -169,11 +182,12 @@ export default function RegistrationForm({ onComplete }: Props) {
           {/* Submit */}
           <button
             type="submit"
-            className="w-full py-5 rounded-2xl text-lg font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+            className="w-full py-5 rounded-xl text-lg font-semibold transition-all hover:scale-[0.98] active:scale-[0.95] cursor-pointer"
             style={{
-              background: "linear-gradient(135deg, #58a6ff 0%, #a78bfa 100%)",
+              background: "var(--color-accent-teal)",
               color: "#fff",
-              boxShadow: "0 4px 20px rgba(88,166,255,0.3)",
+              border: "1px solid transparent",
+              boxShadow: "0 2px 12px rgba(15, 118, 110, 0.3)",
             }}>
             {t("begin_btn")}
           </button>

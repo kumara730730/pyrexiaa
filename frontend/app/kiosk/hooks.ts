@@ -80,7 +80,11 @@ export function useTriageChat() {
           }),
         });
 
-        if (!response.ok) throw new Error("Failed to start triage");
+        if (!response.ok) {
+          const errorBody = await response.text().catch(() => "");
+          console.error(`Triage start failed: HTTP ${response.status}`, errorBody);
+          throw new Error(`Failed to start triage (HTTP ${response.status})`);
+        }
         const sessionData = await response.json();
         
         sessionIdRef.current = sessionData.session_id;
@@ -138,6 +142,8 @@ export function useTriageChat() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               session_id: sessionIdRef.current || "demo-session",
+              patient_id: patientIdRef.current,
+              clinic_id: clinicIdRef.current,
               message: text,
               language,
             }),
@@ -161,6 +167,8 @@ export function useTriageChat() {
       try {
         const body = JSON.stringify({
           session_id: sessionIdRef.current || "demo-session",
+          patient_id: patientIdRef.current,
+          clinic_id: clinicIdRef.current,
           message: text,
           language,
           ...(voiceDistressScore !== undefined && { voice_distress_score: voiceDistressScore }),
@@ -185,6 +193,7 @@ export function useTriageChat() {
           let accumulated = "";
           let currentEvent = "message";
           let isScoreEvent = false;
+          let isScoringJson = false;
 
           if (reader) {
             while (true) {
@@ -205,17 +214,45 @@ export function useTriageChat() {
 
                     if (currentEvent === "token" && parsed.token) {
                       accumulated += parsed.token;
-                      setMessages((prev) => {
-                        const updated = [...prev];
-                        updated[updated.length - 1] = {
-                          role: "assistant",
-                          content: accumulated,
-                          isStreaming: true,
-                        };
-                        return updated;
-                      });
+
+                      // Detect if the streamed content is a scoring JSON response.
+                      // If so, suppress it from the chat bubble entirely.
+                      const trimmed = accumulated.trimStart();
+                      if (
+                        !isScoringJson &&
+                        (trimmed.startsWith("{") || trimmed.startsWith("```")) &&
+                        trimmed.includes("urgency_score")
+                      ) {
+                        isScoringJson = true;
+                        // Clear the chat bubble so no JSON is visible
+                        setMessages((prev) => {
+                          const updated = [...prev];
+                          if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
+                            updated[updated.length - 1] = {
+                              role: "assistant",
+                              content: "",
+                              isStreaming: true,
+                            };
+                          }
+                          return updated;
+                        });
+                      }
+
+                      // Only update the chat bubble if this is NOT scoring JSON
+                      if (!isScoringJson) {
+                        setMessages((prev) => {
+                          const updated = [...prev];
+                          updated[updated.length - 1] = {
+                            role: "assistant",
+                            content: accumulated,
+                            isStreaming: true,
+                          };
+                          return updated;
+                        });
+                      }
                     } else if (currentEvent === "score") {
                       isScoreEvent = true;
+                      isScoringJson = true;
                       setTriageResult(parsed);
                       setMessages((prev) => {
                         const updated = [...prev];
@@ -235,8 +272,43 @@ export function useTriageChat() {
             }
           }
 
-          // Finalize the message if it wasn't just a score event
-          if (!isScoreEvent) {
+          // Fallback: if the stream completed with scoring JSON but no explicit
+          // score event was emitted, parse the JSON manually and set triageResult.
+          if (!isScoreEvent && isScoringJson) {
+            try {
+              let jsonText = accumulated.trim();
+              // Strip markdown code fences if present
+              if (jsonText.startsWith("```")) {
+                const lines = jsonText.split("\n");
+                const jsonLines: string[] = [];
+                let inBlock = false;
+                for (const l of lines) {
+                  if (l.trim().startsWith("```") && !inBlock) { inBlock = true; continue; }
+                  else if (l.trim().startsWith("```") && inBlock) { break; }
+                  else if (inBlock) { jsonLines.push(l); }
+                }
+                jsonText = jsonLines.join("\n").trim();
+              }
+              const scoreData = JSON.parse(jsonText);
+              if (scoreData.urgency_score !== undefined) {
+                isScoreEvent = true;
+                setTriageResult(scoreData);
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
+                    return updated.slice(0, -1);
+                  }
+                  return updated;
+                });
+              }
+            } catch {
+              // Not valid JSON despite looking like it — treat as normal text
+              isScoringJson = false;
+            }
+          }
+
+          // Finalize the message if it wasn't a score event
+          if (!isScoreEvent && !isScoringJson) {
             setMessages((prev) => {
               const updated = [...prev];
               if (updated.length > 0 && updated[updated.length - 1].role === "assistant") {
@@ -245,6 +317,15 @@ export function useTriageChat() {
                   content: accumulated,
                   isStreaming: false,
                 };
+              }
+              return updated;
+            });
+          } else if (isScoringJson && !isScoreEvent) {
+            // Scoring JSON detected but couldn't parse — remove empty bubble
+            setMessages((prev) => {
+              const updated = [...prev];
+              if (updated.length > 0 && updated[updated.length - 1].role === "assistant" && !updated[updated.length - 1].content) {
+                return updated.slice(0, -1);
               }
               return updated;
             });
@@ -292,7 +373,7 @@ export function useTriageChat() {
     []
   );
 
-  return { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef };
+  return { messages, isStreaming, triageResult, isEmergency, sendMessage, startSession, sessionIdRef, patientIdRef, clinicIdRef };
 }
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
